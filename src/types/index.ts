@@ -111,7 +111,7 @@ export interface AiReadme {
 }
 
 export interface ExtractAiPayload {
-  fileTree: FileTreeNode;
+  fileTree: FileTreeNode | string;
   files: Array<{
     path: string;
     content: string;

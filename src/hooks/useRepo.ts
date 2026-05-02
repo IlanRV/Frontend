@@ -89,6 +89,20 @@ export function useRepo(repoId: string | undefined) {
     void refresh();
   }, [refresh]);
 
+  useEffect(() => {
+    const status = state.repo?.status;
+
+    if (!repoId || (status !== "cloning" && status !== "analyzing")) {
+      return;
+    }
+
+    const intervalId = window.setInterval(() => {
+      void refresh();
+    }, 2000);
+
+    return () => window.clearInterval(intervalId);
+  }, [refresh, repoId, state.repo?.status]);
+
   return {
     repo: state.repo,
     aiReadme: state.aiReadme,

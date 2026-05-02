@@ -116,16 +116,20 @@ function normalizeChatMessage(payload: unknown): ChatMessage {
   };
 }
 
-function normalizeAiReadme(payload: unknown): AiReadme {
+function normalizeAiReadme(payload: unknown): AiReadme | undefined {
   if (typeof payload === "string") {
-    return { raw: payload };
+    return payload.trim().length > 0 ? { raw: payload } : undefined;
   }
 
   if (!isRecord(payload)) {
-    return payload as AiReadme;
+    return undefined;
   }
 
   if (typeof payload.aiReadme === "string") {
+    if (payload.aiReadme.trim().length === 0) {
+      return undefined;
+    }
+
     return {
       ...(payload as AiReadme),
       title: readString(payload, "title") ?? "AI README",
@@ -133,7 +137,11 @@ function normalizeAiReadme(payload: unknown): AiReadme {
     };
   }
 
-  return payload as AiReadme;
+  if (typeof payload.raw === "string" && payload.raw.trim().length > 0) {
+    return payload as AiReadme;
+  }
+
+  return undefined;
 }
 
 function createFallbackId(prefix: string) {
@@ -209,10 +217,10 @@ export const api = {
   },
   ai: {
     extract: (repoId: string, payload: ExtractAiPayload) =>
-      apiFetch<unknown>(`/ai/extract/${repoId}`, {
+      apiFetch<{ success: boolean; extractionId: string; status: string }>(`/ai/extract/${repoId}`, {
         method: "POST",
         json: payload,
-      }).then(normalizeAiReadme),
+      }),
     getReadme: (repoId: string) =>
       apiFetch<unknown>(`/ai/extract/${repoId}`).then(normalizeAiReadme),
   },

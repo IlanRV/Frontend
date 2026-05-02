@@ -92,6 +92,7 @@ export function RepoPage() {
   const bootedRepoRef = useRef<string | undefined>();
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
+  const aiReadmeRequestRef = useRef<string | undefined>();
 
   const selectFile = useCallback(
     async (path: string) => {
@@ -171,10 +172,19 @@ export function RepoPage() {
   }, [bootAttempt, bootstrapRepo, repo, runProject, searchParams, selectFile]);
 
   useEffect(() => {
-    if (activeTab === "ai-readme" && repoId && !aiReadme && !isAiLoading) {
-      void loadAiReadme();
+    if (activeTab !== "ai-readme" || !repoId || aiReadme || isAiLoading) {
+      return;
     }
-  }, [activeTab, aiReadme, isAiLoading, loadAiReadme, repoId]);
+
+    const requestKey = `${repoId}:${repo?.status ?? "unknown"}`;
+
+    if (aiReadmeRequestRef.current === requestKey) {
+      return;
+    }
+
+    aiReadmeRequestRef.current = requestKey;
+    void loadAiReadme();
+  }, [activeTab, aiReadme, isAiLoading, loadAiReadme, repo?.status, repoId]);
 
   useEffect(() => {
     if (!snapshot.portalUrl || registeredPortalRef.current === snapshot.portalUrl) {
