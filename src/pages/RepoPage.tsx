@@ -274,9 +274,7 @@ export function RepoPage() {
         if (shouldSyncExtraction) {
           void collectAiExtractionPayload(nextTree)
             .then((payload) => api.ai.extract(repo.id, payload))
-            .catch((syncError: unknown) => {
-              console.debug("[DevHub] source cache refresh failed:", syncError);
-            });
+            .catch(() => undefined);
         }
 
         if (!autoRunRef.current && shouldRestoreRun) {

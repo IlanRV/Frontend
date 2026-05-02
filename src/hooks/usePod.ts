@@ -78,9 +78,7 @@ function scheduleTerminate(repoId: string, entry: PodRegistryEntry) {
     }
 
     podRegistry.delete(repoId);
-    void entry.manager.terminate().catch((error: unknown) => {
-      console.debug("[BrowserPod] scheduled cleanup failed:", error);
-    });
+    void entry.manager.terminate().catch(() => undefined);
   }, IDLE_TERMINATE_DELAY_MS);
 }
 

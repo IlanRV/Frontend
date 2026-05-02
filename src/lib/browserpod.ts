@@ -373,10 +373,8 @@ function walk(fullPath) {
 }
 
 try {
-  console.log("[DevHub tree] cwd=" + process.cwd());
   const tree = walk(root);
   const json = JSON.stringify(tree);
-  console.log("[DevHub tree] serialized " + Buffer.byteLength(json, "utf-8") + " bytes");
   emitPayload(json);
 } catch (error) {
   console.error("[DevHub tree] failed", error && error.stack ? error.stack : error);
@@ -451,7 +449,6 @@ function ensureDirectory(rootNode, parts) {
 }
 
 try {
-  console.log("[DevHub git tree] cwd=" + process.cwd());
   const rawFiles = execFileSync("git", ["ls-files", "-z"], {
     cwd: root,
     encoding: "utf8"
@@ -484,7 +481,6 @@ try {
   }
 
   const json = JSON.stringify(sortChildren(tree));
-  console.log("[DevHub git tree] serialized " + Buffer.byteLength(json, "utf-8") + " bytes");
   emitPayload(json);
 } catch (error) {
   console.error("[DevHub git tree] failed", error && error.stack ? error.stack : error);
@@ -512,9 +508,7 @@ function emitPayload(value) {
 }
 
 try {
-  console.log("[DevHub read] input=" + inputPath);
   const content = fs.readFileSync(inputPath, "utf-8");
-  console.log("[DevHub read] read " + Buffer.byteLength(content, "utf-8") + " bytes");
   emitPayload(content);
 } catch (error) {
   console.error("[DevHub read] failed", error && error.stack ? error.stack : error);
@@ -616,8 +610,7 @@ export class PodLifecycleManager {
     }
 
     const preview = commandPreview(command, args);
-    console.debug("[BrowserPod] command start:", { command, args, cwd: options.cwd });
-    if (options.log ?? true) {
+    if (options.log ?? false) {
       this.log(`$ ${preview}`);
     }
 
@@ -627,7 +620,6 @@ export class PodLifecycleManager {
         cwd: options.cwd,
         echo: options.echo ?? true,
       });
-      console.debug("[BrowserPod] command finished:", preview);
       return process;
     } catch (error) {
       console.error("[BrowserPod] command failed:", { command, args, cwd: options.cwd, error });
@@ -659,7 +651,6 @@ export class PodLifecycleManager {
 
     this.captureTerminalHost = host;
     this.captureTerminal = await this.pod.createDefaultTerminal(host);
-    console.debug("[BrowserPod] hidden capture terminal created");
 
     return this.captureTerminal;
   }
@@ -685,8 +676,7 @@ export class PodLifecycleManager {
         originalWrite(chunk, callback);
       };
 
-      console.debug("[BrowserPod] capture command start:", { command, args, cwd: options.cwd });
-      if (options.log ?? true) {
+      if (options.log ?? false) {
         this.log(`$ ${preview}`);
       }
 
@@ -695,11 +685,6 @@ export class PodLifecycleManager {
           terminal,
           cwd: options.cwd,
           echo: options.echo ?? false,
-        });
-        console.debug("[BrowserPod] capture command finished:", {
-          preview,
-          outputLength: output.length,
-          outputPreview: output.slice(0, 1000),
         });
         return output;
       } catch (error) {
@@ -734,9 +719,7 @@ export class PodLifecycleManager {
       return await this.runCommandWithOutput("node", [scriptPath], { ...options, log: false });
     } finally {
       void this.runCommand("rm", ["-f", scriptPath], { cwd: "/home/user", echo: false, log: false }).catch(
-        (error: unknown) => {
-          console.debug("[BrowserPod] failed to remove temp script:", error);
-        },
+        () => undefined,
       );
     }
   }
@@ -746,10 +729,8 @@ export class PodLifecycleManager {
       if (this.terminalHost !== terminalHost) {
         this.terminal = await this.pod.createDefaultTerminal(terminalHost);
         this.terminalHost = terminalHost;
-        console.debug("[BrowserPod] terminal reattached");
       }
       this.onSnapshot(this.snapshot);
-      console.debug("[BrowserPod] already booted, reusing pod");
       return this.pod;
     }
 
@@ -758,7 +739,6 @@ export class PodLifecycleManager {
       throw new Error("Set VITE_BP_APIKEY in .env before booting BrowserPod");
     }
 
-    console.debug("[BrowserPod] booting with Node 22, apiKey prefix:", this.apiKey.slice(0, 10) + "...");
     this.emit({ state: "booting", error: undefined });
     this.log("Booting BrowserPod with Node 22");
 
@@ -770,18 +750,14 @@ export class PodLifecycleManager {
       };
 
       this.pod = await BrowserPod.boot(bootOptions);
-      console.debug("[BrowserPod] BrowserPod.boot() resolved successfully");
       this.terminal = await this.pod.createDefaultTerminal(terminalHost);
       this.terminalHost = terminalHost;
-      console.debug("[BrowserPod] terminal created");
       this.pod.onPortal(({ url }) => {
-        console.debug("[BrowserPod] portal opened:", url);
         this.emit({ portalUrl: url });
         this.log(`Portal opened: ${url}`);
       });
       this.emit({ state: "ready" });
       this.log("BrowserPod ready");
-      console.debug("[BrowserPod] ready");
       return this.pod;
     } catch (error) {
       console.error("[BrowserPod] boot failed:", error);
@@ -794,7 +770,6 @@ export class PodLifecycleManager {
 
   async cloneRepo(repoUrl: string) {
     if (this.clonedRepoUrl === repoUrl && this.snapshot.fileTree && this.snapshot.runnability) {
-      console.debug("[BrowserPod] repo already prepared, reusing cloned filesystem");
       return {
         fileTree: this.snapshot.fileTree,
         runnability: this.snapshot.runnability,
@@ -813,7 +788,6 @@ export class PodLifecycleManager {
       };
     }
 
-    console.debug("[BrowserPod] cloning repo:", repoUrl);
     this.emit({ state: "cloning", error: undefined, fileTree: undefined });
     this.log(`Cloning ${repoUrl}`);
 
@@ -822,11 +796,8 @@ export class PodLifecycleManager {
       await this.runCommand("rm", ["-rf", REPO_ROOT], { echo: false });
       await this.runCommand("git", ["clone", "--depth", "1", repoUrl, REPO_ROOT]);
       this.clonedRepoUrl = repoUrl;
-      console.debug("[BrowserPod] clone complete, building file tree");
       const fileTree = await this.refreshFileTreeWithRetries();
-      console.debug("[BrowserPod] file tree built:", fileTree);
       const runnability = await this.checkRunnability();
-      console.debug("[BrowserPod] runnability:", runnability);
       this.emit({ state: "ready", fileTree, runnability });
       return { fileTree, runnability };
     } catch (error) {
@@ -843,8 +814,6 @@ export class PodLifecycleManager {
       throw new Error("BrowserPod is not ready yet");
     }
 
-    console.debug("[BrowserPod] opening text file:", path);
-
     let file: BinaryFile | TextFile;
     try {
       file = await this.pod.openFile(path, "utf-8");
@@ -859,7 +828,6 @@ export class PodLifecycleManager {
     }
 
     const size = await file.getSize();
-    console.debug("[BrowserPod] text file opened:", { path, size });
     let remaining = size;
     let content = "";
 
@@ -879,21 +847,14 @@ export class PodLifecycleManager {
       throw new Error("BrowserPod is not ready yet");
     }
 
-    console.debug("[BrowserPod] creating text file:", { path, bytes: content.length });
     const file = await this.pod.createFile(path, "utf-8");
     const writable = toWritableTextFile(file);
     await writable.write(content);
     await writable.close();
-    console.debug("[BrowserPod] text file created:", path);
   }
 
   async readRuntimeTextFile(path: string) {
     const markerId = crypto.randomUUID();
-
-    console.debug("[BrowserPod] reading runtime text file through stdout:", {
-      path,
-      markerId,
-    });
 
     const output = await this.runNodeScriptWithOutput(buildReadTextFileScript(path, markerId), {
       cwd: REPO_ROOT,
@@ -915,7 +876,6 @@ export class PodLifecycleManager {
     });
 
     const treeJson = extractMarkedPayload(output, markerId);
-    console.debug("[BrowserPod] file tree JSON loaded:", { bytes: treeJson.length });
     if (!treeJson.trim()) {
       throw new Error("BrowserPod produced an empty file tree response");
     }
@@ -931,7 +891,6 @@ export class PodLifecycleManager {
       const delay = FILE_TREE_RETRY_DELAYS_MS[attempt];
 
       if (delay > 0) {
-        this.log("Waiting for cloned files to settle before reading the tree");
         await sleep(delay);
       }
 
@@ -944,10 +903,6 @@ export class PodLifecycleManager {
         }
       } catch (error) {
         lastError = error;
-        console.debug("[BrowserPod] file tree refresh attempt failed:", {
-          attempt: attempt + 1,
-          error,
-        });
       }
     }
 
@@ -961,7 +916,6 @@ export class PodLifecycleManager {
   async refreshFileTree() {
     const markerId = crypto.randomUUID();
 
-    console.debug("[BrowserPod] refreshing file tree through stdout:", { markerId });
     const tree = await this.loadFileTreeFromScript(buildTreeScript(REPO_ROOT, markerId), markerId);
 
     if (hasTreeEntries(tree)) {
@@ -969,7 +923,6 @@ export class PodLifecycleManager {
       return tree;
     }
 
-    console.debug("[BrowserPod] filesystem tree was empty, falling back to git index");
     this.log("Filesystem tree was empty, checking git index");
     const gitMarkerId = crypto.randomUUID();
     const gitTree = await this.loadFileTreeFromScript(buildGitTreeScript(REPO_ROOT, gitMarkerId), gitMarkerId);
@@ -1074,8 +1027,8 @@ export class PodLifecycleManager {
     for (const file of candidates) {
       try {
         detected.push(...detectRoutePaths(await this.readRepoFile(file.path)));
-      } catch (error) {
-        console.debug("[BrowserPod] route scan failed:", { path: file.path, error });
+      } catch {
+        // Route suggestions are best effort; file viewing and running do not depend on them.
       }
     }
 
@@ -1091,12 +1044,10 @@ export class PodLifecycleManager {
       return Promise.resolve();
     }
 
-    console.debug("[BrowserPod] runProject, entryPoint:", entryPoint);
     this.runLock = (async () => {
       this.emit({ state: "installing", error: undefined });
       this.log("Installing npm dependencies");
       await this.runCommand("npm", ["install"], { cwd: REPO_ROOT });
-      console.debug("[BrowserPod] npm install complete, starting project");
 
       this.emit({ state: "running", portalUrl: undefined });
       this.log(`Starting npm script: ${entryPoint}`);
@@ -1105,7 +1056,6 @@ export class PodLifecycleManager {
 
       void runPromise
         .then((process) => {
-          console.debug("[BrowserPod] project process started:", process);
           this.runningProcess = process;
         })
         .catch((error: unknown) => {
@@ -1124,7 +1074,6 @@ export class PodLifecycleManager {
   }
 
   async stopProject() {
-    console.debug("[BrowserPod] stopProject");
     this.emit({ state: "stopping" });
     this.log("Stopping project");
 
@@ -1150,12 +1099,11 @@ export class PodLifecycleManager {
   }
 
   async terminate() {
-    console.debug("[BrowserPod] terminate");
     if (this.snapshot.state === "running" || this.snapshot.state === "installing") {
       try {
         await this.stopProject();
-      } catch (error) {
-        console.debug("[BrowserPod] stop during terminate failed:", error);
+      } catch {
+        // Termination should continue even if process cleanup has already happened.
       }
     }
 
@@ -1165,8 +1113,8 @@ export class PodLifecycleManager {
     if (maybeTerminate) {
       try {
         await maybeTerminate.call(pod);
-      } catch (error) {
-        console.debug("[BrowserPod] pod terminate failed:", error);
+      } catch {
+        // The pod may already be closed by the runtime.
       }
     }
 
