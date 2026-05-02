@@ -93,27 +93,31 @@ export function FileViewer({ path, content, isLoading, error, onRetry }: FileVie
   }
 
   return (
-    <div className="h-full min-h-[32rem] overflow-hidden rounded-lg border border-border">
-      <div className="flex h-10 items-center border-b border-border bg-muted/40 px-3 text-xs text-muted-foreground">
+    <div className="flex h-[calc(100vh-18rem)] min-h-[36rem] flex-col overflow-hidden rounded-lg border border-border bg-background">
+      <div className="flex h-10 shrink-0 items-center border-b border-border bg-muted/40 px-3 text-xs text-muted-foreground">
         <span className="truncate">{path}</span>
       </div>
-      <Editor
-        height="calc(100% - 2.5rem)"
-        language={languageForPath(path)}
-        theme={theme}
-        value={content}
-        options={{
-          readOnly: true,
-          minimap: { enabled: false },
-          fontSize: 13,
-          fontLigatures: true,
-          scrollBeyondLastLine: false,
-          wordWrap: "on",
-          lineNumbersMinChars: 3,
-          renderLineHighlight: "line",
-          tabSize: 2,
-        }}
-      />
+      <div className="min-h-0 flex-1">
+        <Editor
+          key={path}
+          height="100%"
+          language={languageForPath(path)}
+          theme={theme}
+          value={content}
+          options={{
+            readOnly: true,
+            automaticLayout: true,
+            minimap: { enabled: false },
+            fontSize: 13,
+            fontLigatures: true,
+            scrollBeyondLastLine: false,
+            wordWrap: "on",
+            lineNumbersMinChars: 3,
+            renderLineHighlight: "line",
+            tabSize: 2,
+          }}
+        />
+      </div>
     </div>
   );
 }

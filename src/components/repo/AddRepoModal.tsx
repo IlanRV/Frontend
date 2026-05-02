@@ -79,7 +79,7 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-h-[calc(100vh-2rem)] max-w-2xl overflow-hidden">
         <DialogHeader>
           <DialogTitle>Add repo</DialogTitle>
           <DialogDescription>
@@ -87,7 +87,7 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
           </DialogDescription>
         </DialogHeader>
 
-        <form className="space-y-4" onSubmit={handleSubmit}>
+        <form className="flex min-h-0 flex-col gap-4 overflow-y-auto pr-1" onSubmit={handleSubmit}>
           <div className="space-y-2">
             <Label htmlFor="repo-url">GitHub URL</Label>
             <Input
@@ -102,15 +102,15 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
 
           <div
             className={cn(
-              "overflow-hidden rounded-lg border border-border bg-muted/30",
+              "min-h-0 overflow-hidden rounded-lg border border-border bg-muted/30",
               !isSubmitting && "hidden",
             )}
           >
             <div className="border-b border-border px-3 py-2 text-xs font-medium text-muted-foreground">
               {phase ?? pod.snapshot.state}
             </div>
-            <div className="max-h-40 overflow-auto p-3 text-xs">
-              <div ref={pod.terminalRef} className="min-h-28" />
+            <div className="bp-modal-terminal h-36 overflow-auto p-3 text-xs">
+              <div ref={pod.terminalRef} className="h-full min-h-0 overflow-hidden" />
             </div>
           </div>
 

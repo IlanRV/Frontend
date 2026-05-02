@@ -23,6 +23,14 @@ export function useRepo(repoId: string | undefined) {
   });
   const [pollAttempt, setPollAttempt] = useState(0);
 
+  useEffect(() => {
+    setState({
+      isLoading: Boolean(repoId),
+      isAiLoading: false,
+    });
+    setPollAttempt(0);
+  }, [repoId]);
+
   const refresh = useCallback(async () => {
     if (!repoId) {
       setState({ isLoading: false, isAiLoading: false, error: "Missing repo id" });

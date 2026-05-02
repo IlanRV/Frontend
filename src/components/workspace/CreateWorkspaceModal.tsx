@@ -19,12 +19,16 @@ interface CreateWorkspaceModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onCreate: (payload: CreateWorkspacePayload) => Promise<Workspace>;
+  workspaceCount: number;
+  workspaceLimit: number;
 }
 
 export function CreateWorkspaceModal({
   open,
   onOpenChange,
   onCreate,
+  workspaceCount,
+  workspaceLimit,
 }: CreateWorkspaceModalProps) {
   const [name, setName] = useState("");
   const [description, setDescription] = useState("");
@@ -36,6 +40,11 @@ export function CreateWorkspaceModal({
 
     if (!trimmedName) {
       toast.error("Workspace name is required");
+      return;
+    }
+
+    if (workspaceCount >= workspaceLimit) {
+      toast.error("Workspace limit reached. Delete a workspace before creating another.");
       return;
     }
 
@@ -57,6 +66,8 @@ export function CreateWorkspaceModal({
     }
   }
 
+  const isLimitReached = workspaceCount >= workspaceLimit;
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent>
@@ -64,6 +75,8 @@ export function CreateWorkspaceModal({
           <DialogTitle>Create workspace</DialogTitle>
           <DialogDescription>
             Group related GitHub repos into one AI-aware DevHub workspace.
+            {" "}
+            {workspaceCount}/{workspaceLimit} workspaces used.
           </DialogDescription>
         </DialogHeader>
 
@@ -97,7 +110,7 @@ export function CreateWorkspaceModal({
             >
               Cancel
             </Button>
-            <Button type="submit" disabled={isSubmitting}>
+            <Button type="submit" disabled={isSubmitting || isLimitReached}>
               {isSubmitting ? "Creating..." : "Create workspace"}
             </Button>
           </DialogFooter>

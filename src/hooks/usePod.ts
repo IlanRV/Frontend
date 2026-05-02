@@ -15,68 +15,88 @@ function browserPodApiKey() {
   return import.meta.env.VITE_BP_APIKEY ?? "";
 }
 
+const IDLE_TERMINATE_DELAY_MS = 10 * 60 * 1000;
+
+interface PodRegistryEntry {
+  manager: PodLifecycleManager;
+  snapshot: PodSnapshot;
+  subscribers: Set<(snapshot: PodSnapshot) => void>;
+  terminateTimer?: number;
+}
+
+const podRegistry = new Map<string, PodRegistryEntry>();
+
+function shouldKeepPodWarm(snapshot: PodSnapshot) {
+  return snapshot.state === "running" || snapshot.state === "installing";
+}
+
+function getPodEntry(repoId: string) {
+  const existingEntry = podRegistry.get(repoId);
+
+  if (existingEntry) {
+    return existingEntry;
+  }
+
+  const entry: PodRegistryEntry = {
+    manager: undefined as unknown as PodLifecycleManager,
+    snapshot: createInitialPodSnapshot(repoId),
+    subscribers: new Set(),
+  };
+
+  entry.manager = new PodLifecycleManager({
+    repoId,
+    apiKey: browserPodApiKey(),
+    onSnapshot: (snapshot) => {
+      entry.snapshot = snapshot;
+      entry.subscribers.forEach((subscriber) => subscriber(snapshot));
+    },
+  });
+
+  podRegistry.set(repoId, entry);
+  return entry;
+}
+
+function cancelTerminate(entry: PodRegistryEntry) {
+  if (entry.terminateTimer === undefined) {
+    return;
+  }
+
+  window.clearTimeout(entry.terminateTimer);
+  entry.terminateTimer = undefined;
+}
+
+function scheduleTerminate(repoId: string, entry: PodRegistryEntry) {
+  if (entry.terminateTimer !== undefined || shouldKeepPodWarm(entry.snapshot)) {
+    return;
+  }
+
+  entry.terminateTimer = window.setTimeout(() => {
+    entry.terminateTimer = undefined;
+
+    if (entry.subscribers.size > 0 || shouldKeepPodWarm(entry.snapshot)) {
+      return;
+    }
+
+    podRegistry.delete(repoId);
+    void entry.manager.terminate().catch((error: unknown) => {
+      console.debug("[BrowserPod] scheduled cleanup failed:", error);
+    });
+  }, IDLE_TERMINATE_DELAY_MS);
+}
+
 export function usePod(repoId: string | undefined) {
   const terminalRef = useRef<HTMLDivElement | null>(null);
-  const managerRef = useRef<PodLifecycleManager | null>(null);
-  const terminateTimerRef = useRef<number | undefined>();
   const fallbackRepoId = useRef(`temp-${crypto.randomUUID()}`);
-  const managerRepoIdRef = useRef(repoId ?? fallbackRepoId.current);
+  const currentRepoId = repoId ?? fallbackRepoId.current;
   const [snapshot, setSnapshot] = useState<PodSnapshot>(
-    createInitialPodSnapshot(repoId ?? fallbackRepoId.current),
+    () => getPodEntry(currentRepoId).snapshot,
   );
 
-  const cancelPendingTerminate = useCallback(() => {
-    if (terminateTimerRef.current === undefined) {
-      return;
-    }
-
-    window.clearTimeout(terminateTimerRef.current);
-    terminateTimerRef.current = undefined;
-  }, []);
-
   const getManager = useCallback(() => {
-    cancelPendingTerminate();
-
-    const nextRepoId = repoId ?? fallbackRepoId.current;
-
-    if (managerRef.current && managerRepoIdRef.current !== nextRepoId) {
-      void managerRef.current.terminate().catch((error: unknown) => {
-        console.debug("[BrowserPod] previous manager cleanup failed:", error);
-      });
-      managerRef.current = null;
-    }
-
-    if (!managerRef.current) {
-      managerRepoIdRef.current = nextRepoId;
-      managerRef.current = new PodLifecycleManager({
-        repoId: nextRepoId,
-        apiKey: browserPodApiKey(),
-        onSnapshot: setSnapshot,
-      });
-    }
-
-    return managerRef.current;
-  }, [cancelPendingTerminate, repoId]);
-
-  const scheduleTerminate = useCallback(() => {
-    if (terminateTimerRef.current !== undefined || !managerRef.current) {
-      return;
-    }
-
-    const manager = managerRef.current;
-
-    terminateTimerRef.current = window.setTimeout(() => {
-      terminateTimerRef.current = undefined;
-
-      if (managerRef.current === manager) {
-        managerRef.current = null;
-      }
-
-      void manager.terminate().catch((error: unknown) => {
-        console.debug("[BrowserPod] scheduled cleanup failed:", error);
-      });
-    }, 500);
-  }, []);
+    const entry = getPodEntry(currentRepoId);
+    cancelTerminate(entry);
+    return entry.manager;
+  }, [currentRepoId]);
 
   const boot = useCallback(async () => {
     if (!terminalRef.current) {
@@ -128,20 +148,23 @@ export function usePod(repoId: string | undefined) {
   }, [getManager]);
 
   const terminate = useCallback(async () => {
-    cancelPendingTerminate();
-
-    const manager = managerRef.current;
-    managerRef.current = null;
-    await manager?.terminate();
-  }, [cancelPendingTerminate]);
+    const entry = getPodEntry(currentRepoId);
+    cancelTerminate(entry);
+    podRegistry.delete(currentRepoId);
+    await entry.manager.terminate();
+  }, [currentRepoId]);
 
   useEffect(() => {
-    cancelPendingTerminate();
+    const entry = getPodEntry(currentRepoId);
+    cancelTerminate(entry);
+    setSnapshot(entry.snapshot);
+    entry.subscribers.add(setSnapshot);
 
     return () => {
-      scheduleTerminate();
+      entry.subscribers.delete(setSnapshot);
+      scheduleTerminate(currentRepoId, entry);
     };
-  }, [cancelPendingTerminate, scheduleTerminate]);
+  }, [currentRepoId]);
 
   return {
     terminalRef,

@@ -4,6 +4,7 @@ import { api } from "@/lib/api";
 import type { CreateWorkspacePayload, Repo, Workspace } from "@/types";
 
 const ACTIVE_REPO_STATUSES = new Set(["cloning", "analyzing"]);
+export const WORKSPACE_LIMIT = 3;
 
 interface AsyncState<T> {
   data?: T;
@@ -44,6 +45,14 @@ export function useWorkspaces() {
     return workspace;
   }, []);
 
+  const deleteWorkspace = useCallback(async (workspaceId: string) => {
+    await api.workspaces.delete(workspaceId);
+    setState((current) => ({
+      ...current,
+      data: current.data?.filter((workspace) => workspace.id !== workspaceId),
+    }));
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -54,6 +63,7 @@ export function useWorkspaces() {
     error: state.error,
     refresh,
     createWorkspace,
+    deleteWorkspace,
   };
 }
 

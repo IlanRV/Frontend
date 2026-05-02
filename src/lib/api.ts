@@ -9,6 +9,7 @@ import type {
   ExtractAiResponse,
   ExtractAiPayload,
   Repo,
+  RepoFileResponse,
   Workspace,
 } from "@/types";
 import { isRecord } from "@/lib/utils";
@@ -207,6 +208,8 @@ export const api = {
         json: payload,
       }).then(normalizeRepo),
     get: (repoId: string) => apiFetch<unknown>(`/repos/${repoId}`).then(normalizeRepo),
+    getFile: (repoId: string, path: string) =>
+      apiFetch<RepoFileResponse>(`/repos/${repoId}/file?path=${encodeURIComponent(path)}`),
     delete: (repoId: string) => apiFetch<void>(`/repos/${repoId}`, { method: "DELETE" }),
     run: (repoId: string, portalUrl: string) =>
       apiFetch<unknown>(`/repos/${repoId}/run`, {

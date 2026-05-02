@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
+import { api } from "@/lib/api";
 import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "@/types";
@@ -56,6 +57,34 @@ function isBusyPodState(state: string) {
   return state === "booting" || state === "cloning" || state === "installing" || state === "stopping";
 }
 
+function isReadablePodState(state: string) {
+  return state === "ready" || state === "running" || state === "installing" || state === "stopping";
+}
+
+function runIntentKey(repoId: string) {
+  return `devhub:repo-run-intent:${repoId}`;
+}
+
+function hasStoredRunIntent(repoId: string) {
+  try {
+    return window.localStorage.getItem(runIntentKey(repoId)) === "true";
+  } catch {
+    return false;
+  }
+}
+
+function setStoredRunIntent(repoId: string, isRunning: boolean) {
+  try {
+    if (isRunning) {
+      window.localStorage.setItem(runIntentKey(repoId), "true");
+    } else {
+      window.localStorage.removeItem(runIntentKey(repoId));
+    }
+  } catch {
+    // Storage may be unavailable in private or restricted browser contexts.
+  }
+}
+
 export function RepoPage() {
   const { id: workspaceId, repoId } = useParams<{ id: string; repoId: string }>();
   const [searchParams] = useSearchParams();
@@ -75,6 +104,7 @@ export function RepoPage() {
     terminalRef,
     snapshot,
     bootstrapRepo,
+    collectAiExtractionPayload,
     readFile,
     runProject,
     stopProject,
@@ -89,6 +119,7 @@ export function RepoPage() {
   const [activeTab, setActiveTab] = useState("code");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
+  const [isRunActionPending, setIsRunActionPending] = useState(false);
   const [bootAttempt, setBootAttempt] = useState(0);
   const bootedRepoRef = useRef<string | undefined>();
   const autoRunRef = useRef(false);
@@ -108,6 +139,7 @@ export function RepoPage() {
     setFileError(undefined);
     setBootstrapError(undefined);
     setActiveTab("code");
+    setIsRunActionPending(false);
     autoRunRef.current = false;
     registeredPortalRef.current = undefined;
     aiReadmeRequestRef.current = undefined;
@@ -120,44 +152,88 @@ export function RepoPage() {
       setIsFileLoading(true);
 
       try {
-        setFileContent(await readFile(path));
+        if (isReadablePodState(snapshot.state)) {
+          setFileContent(await readFile(path));
+        } else if (repoId) {
+          const repoFile = await api.repos.getFile(repoId, path);
+          setFileContent(repoFile.content);
+        } else {
+          throw new Error("Missing repo id");
+        }
         setActiveTab("code");
       } catch (readError) {
-        setFileError(readError instanceof Error ? readError.message : "Unable to read file");
+        if (repoId && isReadablePodState(snapshot.state)) {
+          try {
+            const repoFile = await api.repos.getFile(repoId, path);
+            setFileContent(repoFile.content);
+            setActiveTab("code");
+            return;
+          } catch {
+            // Keep the original BrowserPod read error below.
+          }
+        }
+
+        setFileError(
+          readError instanceof Error
+            ? readError.message
+            : "Unable to read file. The repo may still be warming up.",
+        );
       } finally {
         setIsFileLoading(false);
       }
     },
-    [readFile],
+    [readFile, repoId, snapshot.state],
   );
 
   const handleRun = useCallback(async () => {
-    const runnability = snapshot.runnability;
+    if (isRunActionPending) {
+      return;
+    }
+
+    const runnability = snapshot.runnability ?? repo?.runnability ?? undefined;
 
     if (!runnability?.canRun || !runnability.entryPoint) {
       toast.error("This repo is not runnable in BrowserPod yet");
       return;
     }
 
+    setIsRunActionPending(true);
+
     try {
       await runProject(runnability.entryPoint);
+      if (repo?.id) {
+        setStoredRunIntent(repo.id, true);
+      }
       setActiveTab("live");
       setIsConsoleOpen(true);
       toast.success("Project starting in BrowserPod");
     } catch (runError) {
       toast.error(runError instanceof Error ? runError.message : "Unable to run project");
+    } finally {
+      setIsRunActionPending(false);
     }
-  }, [runProject, snapshot.runnability]);
+  }, [isRunActionPending, repo?.id, repo?.runnability, runProject, snapshot.runnability]);
 
   const handleStop = useCallback(async () => {
+    if (isRunActionPending) {
+      return;
+    }
+
+    setIsRunActionPending(true);
+
     try {
       await stopProject();
+      if (repo?.id) {
+        setStoredRunIntent(repo.id, false);
+      }
       await registerStop();
       toast.success("Project stopped");
     } catch (stopError) {
       toast.error(stopError instanceof Error ? stopError.message : "Unable to stop project");
+    } finally {
+      setIsRunActionPending(false);
     }
-  }, [registerStop, stopProject]);
+  }, [isRunActionPending, registerStop, repo?.id, stopProject]);
 
   useEffect(() => {
     if (!repo?.githubUrl || bootedRepoRef.current === repo.id) {
@@ -171,18 +247,30 @@ export function RepoPage() {
       .then(({ fileTree: nextTree, runnability }) => {
         setFileTree(nextTree);
         saveCachedFileTree(repo.id, nextTree);
-        const firstFile = findFirstSupportedFile(nextTree);
-        if (firstFile) {
-          void selectFile(firstFile);
-        }
 
-        if (!autoRunRef.current && searchParams.get("run") === "true") {
+        void collectAiExtractionPayload(nextTree)
+          .then((payload) => api.ai.extract(repo.id, payload))
+          .catch((syncError: unknown) => {
+            console.debug("[DevHub] source cache refresh failed:", syncError);
+          });
+
+        const shouldRestoreRun =
+          searchParams.get("run") === "true" ||
+          hasStoredRunIntent(repo.id) ||
+          repo.status === "running";
+
+        if (!autoRunRef.current && shouldRestoreRun) {
           autoRunRef.current = true;
           if (runnability.canRun && runnability.entryPoint) {
-            void runProject(runnability.entryPoint).then(() => {
-              setActiveTab("live");
-              setIsConsoleOpen(true);
-            });
+            void runProject(runnability.entryPoint)
+              .then(() => {
+                setStoredRunIntent(repo.id, true);
+                setActiveTab("live");
+                setIsConsoleOpen(true);
+              })
+              .catch((runError: unknown) => {
+                setBootstrapError(runError instanceof Error ? runError.message : "Unable to restore BrowserPod run");
+              });
           }
         }
       })
@@ -190,7 +278,7 @@ export function RepoPage() {
         bootedRepoRef.current = undefined;
         setBootstrapError(bootError instanceof Error ? bootError.message : "Unable to prepare BrowserPod");
       });
-  }, [bootAttempt, bootstrapRepo, repo, runProject, searchParams, selectFile]);
+  }, [bootAttempt, bootstrapRepo, collectAiExtractionPayload, repo, runProject, searchParams, selectFile]);
 
   useEffect(() => {
     if (activeTab !== "ai-readme" || !repoId || aiReadme || isAiLoading) {
@@ -213,14 +301,18 @@ export function RepoPage() {
     }
 
     registeredPortalRef.current = snapshot.portalUrl;
+    if (repo?.id) {
+      setStoredRunIntent(repo.id, true);
+    }
     void registerRun(snapshot.portalUrl).catch((registerError: unknown) => {
       toast.error(registerError instanceof Error ? registerError.message : "Unable to save portal URL");
     });
-  }, [registerRun, snapshot.portalUrl]);
+  }, [registerRun, repo?.id, snapshot.portalUrl]);
 
   const isRunning = snapshot.state === "running";
-  const isBusy = isBusyPodState(snapshot.state);
-  const portalUrl = snapshot.portalUrl ?? repo?.portalUrl;
+  const isBusy = isRunActionPending || isBusyPodState(snapshot.state);
+  const portalUrl = snapshot.portalUrl;
+  const effectiveRunnability = snapshot.runnability ?? repo?.runnability ?? undefined;
   const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
   const isTreeLoading =
     isLoading ||
@@ -238,6 +330,26 @@ export function RepoPage() {
       setFileTree(fallbackTree);
     }
   }, [fileTree, repo?.fileTree, repo?.id]);
+
+  useEffect(() => {
+    if (!effectiveFileTree || selectedPath || isFileLoading) {
+      return;
+    }
+
+    const firstFile = findFirstSupportedFile(effectiveFileTree);
+
+    if (firstFile) {
+      void selectFile(firstFile);
+    }
+  }, [effectiveFileTree, isFileLoading, selectedPath, selectFile]);
+
+  useEffect(() => {
+    if (!selectedPath || !fileError || isFileLoading || !isReadablePodState(snapshot.state)) {
+      return;
+    }
+
+    void selectFile(selectedPath);
+  }, [fileError, isFileLoading, selectedPath, selectFile, snapshot.state]);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -261,9 +373,9 @@ export function RepoPage() {
           <Button variant="outline" size="icon" onClick={() => setIsSidebarOpen((open) => !open)} title="Toggle file tree">
             <Menu className="h-4 w-4" />
           </Button>
-          <RunnabilityBadge result={snapshot.runnability} />
+          <RunnabilityBadge result={effectiveRunnability} />
           <RunButton
-            canRun={Boolean(snapshot.runnability?.canRun)}
+            canRun={Boolean(effectiveRunnability?.canRun)}
             isRunning={isRunning}
             isBusy={isBusy}
             onRun={() => void handleRun()}
@@ -359,7 +471,11 @@ export function RepoPage() {
               </TabsContent>
 
               <TabsContent value="live" className="min-h-[36rem]">
-                <PortalPreview portalUrl={portalUrl} />
+                <PortalPreview
+                  portalUrl={portalUrl}
+                  previewPath={effectiveRunnability?.previewPath}
+                  previewPaths={effectiveRunnability?.previewPaths}
+                />
               </TabsContent>
 
               <TabsContent value="chat" className="min-h-[36rem]">

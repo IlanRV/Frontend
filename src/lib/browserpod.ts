@@ -64,6 +64,8 @@ const IGNORED_DIRECTORIES = [
 
 const MAX_AI_FILES = 100;
 const MAX_AI_FILE_BYTES = 250_000;
+const MAX_ROUTE_SCAN_FILES = 40;
+const MAX_ROUTE_SCAN_FILE_BYTES = 200_000;
 const REPO_ROOT = "/home/user/repo";
 const FILE_TREE_RETRY_DELAYS_MS = [0, 350, 800, 1400];
 
@@ -76,6 +78,7 @@ interface PodLifecycleManagerOptions {
 interface PodRunOptions {
   cwd?: string;
   echo?: boolean;
+  log?: boolean;
 }
 
 interface XtermLike {
@@ -238,6 +241,46 @@ function flattenSupportedFiles(node: FileTreeNode, output: FileTreeNode[] = []) 
 
 function hasTreeEntries(node: FileTreeNode) {
   return (node.children?.length ?? 0) > 0;
+}
+
+function uniquePreviewPaths(paths: string[]) {
+  return [...new Set(paths.map((path) => path.trim()).filter(Boolean))]
+    .map((path) => (path.startsWith("/") ? path : `/${path}`))
+    .filter((path) => !path.includes(":") && !path.includes("*"))
+    .slice(0, 8);
+}
+
+function detectRoutePaths(content: string) {
+  const paths: string[] = [];
+  const routeCallPattern =
+    /\b(?:app|router)\s*\.\s*(?:get|post|put|patch|delete|all|use)\s*\(\s*["'`]([^"'`]+)["'`]/g;
+  const routeChainPattern = /\brouter\s*\.\s*route\s*\(\s*["'`]([^"'`]+)["'`]/g;
+
+  for (const match of content.matchAll(routeCallPattern)) {
+    paths.push(match[1]);
+  }
+
+  for (const match of content.matchAll(routeChainPattern)) {
+    paths.push(match[1]);
+  }
+
+  return paths;
+}
+
+function choosePreviewPath(paths: string[]) {
+  return (
+    paths.find((path) => path === "/api/health" || path === "/health") ??
+    paths.find((path) => path !== "/") ??
+    paths[0]
+  );
+}
+
+function isRouteScanCandidate(file: FileTreeNode) {
+  if (!file.supported || (file.size ?? 0) > MAX_ROUTE_SCAN_FILE_BYTES) {
+    return false;
+  }
+
+  return [".js", ".jsx", ".ts", ".tsx"].includes(file.extension ?? "");
 }
 
 function normalizeFileTree(value: unknown): FileTreeNode {
@@ -531,8 +574,11 @@ export class PodLifecycleManager {
   private terminal?: Terminal;
   private captureTerminal?: Terminal;
   private captureTerminalHost?: HTMLDivElement;
+  private terminalHost?: HTMLElement;
   private captureQueue: Promise<void> = Promise.resolve();
   private runningProcess?: Process;
+  private runLock?: Promise<void>;
+  private clonedRepoUrl?: string;
   private snapshot: PodSnapshot;
   private readonly apiKey: string;
   private readonly storageKey: string;
@@ -571,7 +617,9 @@ export class PodLifecycleManager {
 
     const preview = commandPreview(command, args);
     console.debug("[BrowserPod] command start:", { command, args, cwd: options.cwd });
-    this.log(`$ ${preview}`);
+    if (options.log ?? true) {
+      this.log(`$ ${preview}`);
+    }
 
     try {
       const process = await this.pod.run(command, args, {
@@ -638,7 +686,9 @@ export class PodLifecycleManager {
       };
 
       console.debug("[BrowserPod] capture command start:", { command, args, cwd: options.cwd });
-      this.log(`$ ${preview}`);
+      if (options.log ?? true) {
+        this.log(`$ ${preview}`);
+      }
 
       try {
         await this.pod.run(command, args, {
@@ -681,9 +731,9 @@ export class PodLifecycleManager {
     await this.writeTextFile(scriptPath, script);
 
     try {
-      return await this.runCommandWithOutput("node", [scriptPath], options);
+      return await this.runCommandWithOutput("node", [scriptPath], { ...options, log: false });
     } finally {
-      void this.runCommand("rm", ["-f", scriptPath], { cwd: "/home/user", echo: false }).catch(
+      void this.runCommand("rm", ["-f", scriptPath], { cwd: "/home/user", echo: false, log: false }).catch(
         (error: unknown) => {
           console.debug("[BrowserPod] failed to remove temp script:", error);
         },
@@ -693,6 +743,12 @@ export class PodLifecycleManager {
 
   async boot(terminalHost: HTMLElement) {
     if (this.pod) {
+      if (this.terminalHost !== terminalHost) {
+        this.terminal = await this.pod.createDefaultTerminal(terminalHost);
+        this.terminalHost = terminalHost;
+        console.debug("[BrowserPod] terminal reattached");
+      }
+      this.onSnapshot(this.snapshot);
       console.debug("[BrowserPod] already booted, reusing pod");
       return this.pod;
     }
@@ -716,6 +772,7 @@ export class PodLifecycleManager {
       this.pod = await BrowserPod.boot(bootOptions);
       console.debug("[BrowserPod] BrowserPod.boot() resolved successfully");
       this.terminal = await this.pod.createDefaultTerminal(terminalHost);
+      this.terminalHost = terminalHost;
       console.debug("[BrowserPod] terminal created");
       this.pod.onPortal(({ url }) => {
         console.debug("[BrowserPod] portal opened:", url);
@@ -736,13 +793,35 @@ export class PodLifecycleManager {
   }
 
   async cloneRepo(repoUrl: string) {
+    if (this.clonedRepoUrl === repoUrl && this.snapshot.fileTree && this.snapshot.runnability) {
+      console.debug("[BrowserPod] repo already prepared, reusing cloned filesystem");
+      return {
+        fileTree: this.snapshot.fileTree,
+        runnability: this.snapshot.runnability,
+      };
+    }
+
+    if (
+      this.clonedRepoUrl === repoUrl &&
+      this.snapshot.fileTree &&
+      (this.snapshot.state === "running" || this.snapshot.state === "installing")
+    ) {
+      const runnability = this.snapshot.runnability ?? (await this.checkRunnability());
+      return {
+        fileTree: this.snapshot.fileTree,
+        runnability,
+      };
+    }
+
     console.debug("[BrowserPod] cloning repo:", repoUrl);
     this.emit({ state: "cloning", error: undefined, fileTree: undefined });
     this.log(`Cloning ${repoUrl}`);
 
     try {
+      this.clonedRepoUrl = undefined;
       await this.runCommand("rm", ["-rf", REPO_ROOT], { echo: false });
       await this.runCommand("git", ["clone", "--depth", "1", repoUrl, REPO_ROOT]);
+      this.clonedRepoUrl = repoUrl;
       console.debug("[BrowserPod] clone complete, building file tree");
       const fileTree = await this.refreshFileTreeWithRetries();
       console.debug("[BrowserPod] file tree built:", fileTree);
@@ -951,6 +1030,13 @@ export class PodLifecycleManager {
       blockers,
     };
 
+    const previewPaths = await this.detectPreviewPaths();
+
+    if (previewPaths.length > 0) {
+      result.previewPaths = previewPaths;
+      result.previewPath = choosePreviewPath(previewPaths);
+    }
+
     this.emit({ runnability: result });
     return result;
   }
@@ -973,31 +1059,68 @@ export class PodLifecycleManager {
     };
   }
 
+  private async detectPreviewPaths() {
+    const fileTree = this.snapshot.fileTree;
+
+    if (!fileTree) {
+      return [];
+    }
+
+    const candidates = flattenSupportedFiles(fileTree)
+      .filter(isRouteScanCandidate)
+      .slice(0, MAX_ROUTE_SCAN_FILES);
+    const detected: string[] = [];
+
+    for (const file of candidates) {
+      try {
+        detected.push(...detectRoutePaths(await this.readRepoFile(file.path)));
+      } catch (error) {
+        console.debug("[BrowserPod] route scan failed:", { path: file.path, error });
+      }
+    }
+
+    return uniquePreviewPaths(detected);
+  }
+
   async runProject(entryPoint: RunScriptName) {
+    if (this.runLock) {
+      return this.runLock;
+    }
+
+    if (this.snapshot.state === "installing" || this.snapshot.state === "running") {
+      return Promise.resolve();
+    }
+
     console.debug("[BrowserPod] runProject, entryPoint:", entryPoint);
-    this.emit({ state: "installing", error: undefined });
-    this.log("Installing npm dependencies");
-    await this.runCommand("npm", ["install"], { cwd: REPO_ROOT });
-    console.debug("[BrowserPod] npm install complete, starting project");
+    this.runLock = (async () => {
+      this.emit({ state: "installing", error: undefined });
+      this.log("Installing npm dependencies");
+      await this.runCommand("npm", ["install"], { cwd: REPO_ROOT });
+      console.debug("[BrowserPod] npm install complete, starting project");
 
-    this.emit({ state: "running", portalUrl: undefined });
-    this.log(`Starting npm script: ${entryPoint}`);
+      this.emit({ state: "running", portalUrl: undefined });
+      this.log(`Starting npm script: ${entryPoint}`);
 
-    const runPromise = this.runCommand("npm", ["run", entryPoint], { cwd: REPO_ROOT });
+      const runPromise = this.runCommand("npm", ["run", entryPoint], { cwd: REPO_ROOT });
 
-    void runPromise
-      .then((process) => {
-        console.debug("[BrowserPod] project process started:", process);
-        this.runningProcess = process;
-      })
-      .catch((error: unknown) => {
-        console.error("[BrowserPod] project process error:", error);
-        const message = error instanceof Error ? error.message : "Project process stopped";
-        if (this.snapshot.state === "running") {
-          this.emit({ state: "error", error: message });
-        }
-        this.log(message, "stderr");
-      });
+      void runPromise
+        .then((process) => {
+          console.debug("[BrowserPod] project process started:", process);
+          this.runningProcess = process;
+        })
+        .catch((error: unknown) => {
+          console.error("[BrowserPod] project process error:", error);
+          const message = error instanceof Error ? error.message : "Project process stopped";
+          if (this.snapshot.state === "running") {
+            this.emit({ state: "error", error: message });
+          }
+          this.log(message, "stderr");
+        });
+    })().finally(() => {
+      this.runLock = undefined;
+    });
+
+    return this.runLock;
   }
 
   async stopProject() {
@@ -1010,11 +1133,15 @@ export class PodLifecycleManager {
 
     if (maybeKill) {
       await maybeKill.call(process);
-    } else {
+    }
+
+    const killPatterns = ["npm run", "nodemon", "node server", "node app", "node index"];
+
+    for (const pattern of killPatterns) {
       try {
-        await this.runCommand("pkill", ["-f", "npm run"], { cwd: REPO_ROOT, echo: false });
+        await this.runCommand("pkill", ["-f", pattern], { cwd: REPO_ROOT, echo: false, log: false });
       } catch {
-        this.log("No killable BrowserPod process handle was available");
+        // pkill exits non-zero when no process matches; that is fine for cleanup.
       }
     }
 
@@ -1045,10 +1172,13 @@ export class PodLifecycleManager {
 
     this.pod = undefined;
     this.terminal = undefined;
+    this.terminalHost = undefined;
     this.captureTerminal = undefined;
     this.captureTerminalHost?.remove();
     this.captureTerminalHost = undefined;
     this.runningProcess = undefined;
+    this.runLock = undefined;
+    this.clonedRepoUrl = undefined;
     this.emit({ state: "idle", portalUrl: undefined });
   }
 }

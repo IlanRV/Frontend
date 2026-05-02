@@ -70,6 +70,8 @@ export interface RunnabilityResult {
   canRun: boolean;
   entryPoint?: "dev" | "start" | "serve" | string | null;
   blockers: string[];
+  previewPath?: string;
+  previewPaths?: string[];
 }
 
 export interface TerminalLine {
@@ -125,6 +127,13 @@ export interface ExtractAiResponse {
   status: RepoStatus;
   cached?: boolean;
   deduped?: boolean;
+}
+
+export interface RepoFileResponse {
+  path: string;
+  content: string;
+  size: number;
+  updatedAt: string;
 }
 
 export type ChatRole = "user" | "assistant";

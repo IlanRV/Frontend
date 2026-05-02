@@ -1,16 +1,42 @@
 import { Plus, RotateCw } from "lucide-react";
 import { useState } from "react";
+import { toast } from "sonner";
 
 import { CreateWorkspaceModal } from "@/components/workspace/CreateWorkspaceModal";
 import { WorkspaceCard } from "@/components/workspace/WorkspaceCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useWorkspaces } from "@/hooks/useWorkspace";
+import { useWorkspaces, WORKSPACE_LIMIT } from "@/hooks/useWorkspace";
 
 export function DashboardPage() {
   const [isCreateOpen, setIsCreateOpen] = useState(false);
-  const { workspaces, isLoading, error, refresh, createWorkspace } = useWorkspaces();
+  const { workspaces, isLoading, error, refresh, createWorkspace, deleteWorkspace } = useWorkspaces();
+  const canCreateWorkspace = workspaces.length < WORKSPACE_LIMIT;
+
+  function handleOpenCreate() {
+    if (!canCreateWorkspace) {
+      toast.error(`Workspace limit reached. Delete a workspace before creating another.`);
+      return;
+    }
+
+    setIsCreateOpen(true);
+  }
+
+  async function handleDeleteWorkspace(workspaceId: string, workspaceName: string) {
+    const confirmed = window.confirm(`Delete "${workspaceName}" and all repos in it?`);
+
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await deleteWorkspace(workspaceId);
+      toast.success("Workspace deleted");
+    } catch (deleteError) {
+      toast.error(deleteError instanceof Error ? deleteError.message : "Unable to delete workspace");
+    }
+  }
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
@@ -21,11 +47,16 @@ export function DashboardPage() {
             Browse multi-repo codebases, run projects in BrowserPod, and chat with AI about the source.
           </p>
         </div>
-        <Button onClick={() => setIsCreateOpen(true)}>
+        <Button onClick={handleOpenCreate} disabled={isLoading || !canCreateWorkspace}>
           <Plus className="h-4 w-4" />
           Create Workspace
         </Button>
       </div>
+      {!isLoading && (
+        <p className="mt-3 text-sm text-muted-foreground">
+          {workspaces.length}/{WORKSPACE_LIMIT} workspaces used.
+        </p>
+      )}
 
       {error && (
         <Alert className="mt-6 border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
@@ -55,7 +86,7 @@ export function DashboardPage() {
             <p className="mt-2 text-sm text-muted-foreground">
               Create your first workspace to upload GitHub repos.
             </p>
-            <Button className="mt-4" onClick={() => setIsCreateOpen(true)}>
+            <Button className="mt-4" onClick={handleOpenCreate}>
               <Plus className="h-4 w-4" />
               Create Workspace
             </Button>
@@ -66,7 +97,11 @@ export function DashboardPage() {
       {!isLoading && !error && workspaces.length > 0 && (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {workspaces.map((workspace) => (
-            <WorkspaceCard key={workspace.id} workspace={workspace} />
+            <WorkspaceCard
+              key={workspace.id}
+              workspace={workspace}
+              onDelete={() => void handleDeleteWorkspace(workspace.id, workspace.name)}
+            />
           ))}
         </div>
       )}
@@ -75,6 +110,8 @@ export function DashboardPage() {
         open={isCreateOpen}
         onOpenChange={setIsCreateOpen}
         onCreate={createWorkspace}
+        workspaceCount={workspaces.length}
+        workspaceLimit={WORKSPACE_LIMIT}
       />
     </main>
   );
