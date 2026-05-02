@@ -44,10 +44,11 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
     }
 
     setIsSubmitting(true);
+    let repo: Repo | undefined;
 
     try {
       setPhase("Creating repo record");
-      const repo = await onAdd(trimmedUrl);
+      repo = await onAdd(trimmedUrl);
 
       setPhase("Booting BrowserPod and cloning repo");
       const { fileTree } = await pod.bootstrapRepo(trimmedUrl);
@@ -62,8 +63,14 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
       onOpenChange(false);
       await pod.terminate();
     } catch (error) {
+      if (repo) {
+        await api.repos.delete(repo.id).catch(() => undefined);
+        onComplete();
+      }
+
       toast.error(error instanceof Error ? error.message : "Unable to add repo");
     } finally {
+      await pod.terminate().catch(() => undefined);
       setPhase(undefined);
       setIsSubmitting(false);
     }

@@ -126,6 +126,16 @@ function nowIso() {
   return new Date().toISOString();
 }
 
+function readableBrowserPodBootError(error: unknown) {
+  const message = error instanceof Error ? error.message : "BrowserPod failed to boot";
+
+  if (/websocket|api key/i.test(message)) {
+    return "BrowserPod could not connect. Open DevHub at http://localhost:5173, verify VITE_BP_APIKEY is a valid BrowserPod key, then restart the frontend dev server.";
+  }
+
+  return message;
+}
+
 function createTerminalLine(text: string, stream: TerminalLine["stream"]): TerminalLine {
   return {
     id: crypto.randomUUID(),
@@ -586,10 +596,10 @@ export class PodLifecycleManager {
       return this.pod;
     } catch (error) {
       console.error("[BrowserPod] boot failed:", error);
-      const message = error instanceof Error ? error.message : "BrowserPod failed to boot";
+      const message = readableBrowserPodBootError(error);
       this.emit({ state: "error", error: message });
       this.log(message, "stderr");
-      throw error;
+      throw new Error(message);
     }
   }
 
