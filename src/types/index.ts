@@ -51,6 +51,10 @@ export interface Repo {
   runScript?: string;
   portalUrl?: string;
   fileTree?: FileTreeNode | null;
+  analysis?: ExtractionResult | null;
+  analysisUpdatedAt?: string | null;
+  analysisModel?: string | null;
+  analysisError?: string | null;
   aiReadme?: string | null;
   aiReadmeStatus?: "pending" | "ready" | "error" | string;
   createdAt: string;
@@ -113,6 +117,43 @@ export interface AiReadme {
   raw?: string;
 }
 
+export interface TechStack {
+  language: string;
+  framework: string | null;
+  runtime: string;
+  buildTool: string | null;
+  testingFramework: string | null;
+  database: string | null;
+  otherTools: string[];
+}
+
+export interface Overview {
+  oneLiner: string;
+  summary: string;
+  purpose: string;
+  targetUsers: string;
+}
+
+export interface FunctionDoc {
+  name: string;
+  type: "function" | "class" | "method";
+  file: string;
+  line: number;
+  signature: string;
+  description: string;
+  params: Array<{ name: string; type: string; description: string }>;
+  returns: { type: string; description: string };
+  throws: string[];
+  dependencies: string[];
+}
+
+export interface ExtractionResult {
+  techStack: TechStack;
+  overview: Overview;
+  functions: FunctionDoc[];
+  dependencies: Record<string, string>;
+}
+
 export interface ExtractAiPayload {
   fileTree: FileTreeNode | string;
   files: Array<{
@@ -127,6 +168,19 @@ export interface ExtractAiResponse {
   status: RepoStatus;
   cached?: boolean;
   deduped?: boolean;
+}
+
+export interface ExtractionResponse extends ExtractAiResponse {
+  aiReadmeStatus?: "pending" | "ready" | "error" | string | null;
+  techStack: TechStack | null;
+  overview: Overview | null;
+  functions: FunctionDoc[];
+  dependencies: Record<string, string>;
+  aiReadme: string | null;
+  runnability?: RunnabilityResult | null;
+  analysisUpdatedAt?: string | null;
+  analysisModel?: string | null;
+  analysisError?: string | null;
 }
 
 export interface RepoFileResponse {

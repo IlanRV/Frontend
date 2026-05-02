@@ -8,6 +8,7 @@ import type {
   CreateWorkspacePayload,
   ExtractAiResponse,
   ExtractAiPayload,
+  ExtractionResponse,
   Repo,
   RepoFileResponse,
   Workspace,
@@ -146,6 +147,32 @@ function normalizeAiReadme(payload: unknown): AiReadme | undefined {
   return undefined;
 }
 
+function normalizeExtractionResponse(payload: unknown): ExtractionResponse {
+  if (!isRecord(payload)) {
+    return payload as ExtractionResponse;
+  }
+
+  return {
+    success: payload.success !== false,
+    extractionId: readString(payload, "extractionId") ?? "",
+    status: (readString(payload, "status") ?? "ready") as ExtractionResponse["status"],
+    aiReadmeStatus: readString(payload, "aiReadmeStatus") ?? null,
+    techStack: isRecord(payload.techStack) ? (payload.techStack as unknown as ExtractionResponse["techStack"]) : null,
+    overview: isRecord(payload.overview) ? (payload.overview as unknown as ExtractionResponse["overview"]) : null,
+    functions: Array.isArray(payload.functions) ? (payload.functions as ExtractionResponse["functions"]) : [],
+    dependencies: isRecord(payload.dependencies) ? (payload.dependencies as Record<string, string>) : {},
+    aiReadme: typeof payload.aiReadme === "string" && payload.aiReadme.trim().length > 0 ? payload.aiReadme : null,
+    runnability: isRecord(payload.runnability)
+      ? (payload.runnability as unknown as ExtractionResponse["runnability"])
+      : null,
+    analysisUpdatedAt: readString(payload, "analysisUpdatedAt") ?? null,
+    analysisModel: readString(payload, "analysisModel") ?? null,
+    analysisError: readString(payload, "analysisError") ?? null,
+    cached: typeof payload.cached === "boolean" ? payload.cached : undefined,
+    deduped: typeof payload.deduped === "boolean" ? payload.deduped : undefined,
+  };
+}
+
 function createFallbackId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
@@ -225,8 +252,12 @@ export const api = {
         method: "POST",
         json: payload,
       }),
+    getExtraction: (repoId: string) =>
+      apiFetch<unknown>(`/ai/extract/${repoId}`).then(normalizeExtractionResponse),
     getReadme: (repoId: string) =>
-      apiFetch<unknown>(`/ai/extract/${repoId}`).then(normalizeAiReadme),
+      apiFetch<unknown>(`/ai/extract/${repoId}`).then((payload) =>
+        normalizeAiReadme(normalizeExtractionResponse(payload)),
+      ),
   },
   chat: {
     getWorkspace: (workspaceId: string) =>

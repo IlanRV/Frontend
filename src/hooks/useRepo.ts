@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
-import type { AiReadme, Repo } from "@/types";
+import { loadCachedExtraction, saveCachedExtraction } from "@/lib/extractionCache";
+import type { AiReadme, ExtractionResponse, Repo } from "@/types";
 
 interface RepoState {
   repo?: Repo;
+  extraction?: ExtractionResponse;
   aiReadme?: AiReadme;
   error?: string;
   aiError?: string;
@@ -16,18 +18,56 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
-export function useRepo(repoId: string | undefined) {
-  const [state, setState] = useState<RepoState>({
+function aiReadmeFromExtraction(extraction: ExtractionResponse | undefined): AiReadme | undefined {
+  if (!extraction?.aiReadme?.trim()) {
+    return undefined;
+  }
+
+  return {
+    title: "AI README",
+    raw: extraction.aiReadme,
+  };
+}
+
+function extractionFromRepo(repo: Repo): ExtractionResponse | undefined {
+  if (!repo.analysis && !repo.aiReadme && !repo.analysisError) {
+    return undefined;
+  }
+
+  return {
+    success: true,
+    extractionId: repo.id,
+    status: repo.status,
+    aiReadmeStatus: repo.aiReadmeStatus ?? null,
+    techStack: repo.analysis?.techStack ?? null,
+    overview: repo.analysis?.overview ?? null,
+    functions: repo.analysis?.functions ?? [],
+    dependencies: repo.analysis?.dependencies ?? {},
+    aiReadme: repo.aiReadme ?? null,
+    runnability: repo.runnability ?? null,
+    analysisUpdatedAt: repo.analysisUpdatedAt ?? null,
+    analysisModel: repo.analysisModel ?? null,
+    analysisError: repo.analysisError ?? null,
+  };
+}
+
+function initialState(repoId: string | undefined): RepoState {
+  const extraction = loadCachedExtraction(repoId);
+
+  return {
+    extraction,
+    aiReadme: aiReadmeFromExtraction(extraction),
     isLoading: Boolean(repoId),
     isAiLoading: false,
-  });
+  };
+}
+
+export function useRepo(repoId: string | undefined) {
+  const [state, setState] = useState<RepoState>(() => initialState(repoId));
   const [pollAttempt, setPollAttempt] = useState(0);
 
   useEffect(() => {
-    setState({
-      isLoading: Boolean(repoId),
-      isAiLoading: false,
-    });
+    setState(initialState(repoId));
     setPollAttempt(0);
   }, [repoId]);
 
@@ -41,7 +81,22 @@ export function useRepo(repoId: string | undefined) {
 
     try {
       const repo = await api.repos.get(repoId);
-      setState((current) => ({ ...current, repo, isLoading: false }));
+      const repoExtraction = extractionFromRepo(repo);
+
+      if (repoExtraction) {
+        saveCachedExtraction(repo.id, repoExtraction);
+      }
+
+      setState((current) => {
+        const extraction = repoExtraction ?? current.extraction;
+        return {
+          ...current,
+          repo,
+          extraction,
+          aiReadme: aiReadmeFromExtraction(extraction) ?? current.aiReadme,
+          isLoading: false,
+        };
+      });
     } catch (error) {
       setState((current) => ({
         ...current,
@@ -52,7 +107,7 @@ export function useRepo(repoId: string | undefined) {
     }
   }, [repoId]);
 
-  const loadAiReadme = useCallback(async () => {
+  const loadExtraction = useCallback(async () => {
     if (!repoId) {
       return;
     }
@@ -60,8 +115,14 @@ export function useRepo(repoId: string | undefined) {
     setState((current) => ({ ...current, isAiLoading: true, aiError: undefined }));
 
     try {
-      const aiReadme = await api.ai.getReadme(repoId);
-      setState((current) => ({ ...current, aiReadme, isAiLoading: false }));
+      const extraction = await api.ai.getExtraction(repoId);
+      saveCachedExtraction(repoId, extraction);
+      setState((current) => ({
+        ...current,
+        extraction,
+        aiReadme: aiReadmeFromExtraction(extraction) ?? current.aiReadme,
+        isAiLoading: false,
+      }));
     } catch (error) {
       setState((current) => ({
         ...current,
@@ -70,6 +131,8 @@ export function useRepo(repoId: string | undefined) {
       }));
     }
   }, [repoId]);
+
+  const loadAiReadme = loadExtraction;
 
   const registerRun = useCallback(
     async (portalUrl: string) => {
@@ -118,12 +181,14 @@ export function useRepo(repoId: string | undefined) {
 
   return {
     repo: state.repo,
+    extraction: state.extraction,
     aiReadme: state.aiReadme,
     isLoading: state.isLoading,
     isAiLoading: state.isAiLoading,
     error: state.error,
     aiError: state.aiError,
     refresh,
+    loadExtraction,
     loadAiReadme,
     registerRun,
     registerStop,

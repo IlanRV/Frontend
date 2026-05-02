@@ -12,6 +12,7 @@ import { Link, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { AiReadmeViewer } from "@/components/ai/AiReadmeViewer";
+import { FunctionsViewer } from "@/components/ai/FunctionsViewer";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { FileTree } from "@/components/repo/FileTree";
 import { FileViewer } from "@/components/repo/FileViewer";
@@ -90,12 +91,14 @@ export function RepoPage() {
   const [searchParams] = useSearchParams();
   const {
     repo,
+    extraction,
     aiReadme,
     isLoading,
     isAiLoading,
     error,
     aiError,
     refresh,
+    loadExtraction,
     loadAiReadme,
     registerRun,
     registerStop,
@@ -190,16 +193,23 @@ export function RepoPage() {
       return;
     }
 
-    const runnability = snapshot.runnability ?? repo?.runnability ?? undefined;
-
-    if (!runnability?.canRun || !runnability.entryPoint) {
-      toast.error("This repo is not runnable in BrowserPod yet");
-      return;
-    }
-
     setIsRunActionPending(true);
 
     try {
+      let runnability = snapshot.runnability ?? repo?.runnability ?? undefined;
+
+      if (!snapshot.fileTree && repo?.githubUrl) {
+        const prepared = await bootstrapRepo(repo.githubUrl);
+        setFileTree(prepared.fileTree);
+        saveCachedFileTree(repo.id, prepared.fileTree);
+        runnability = prepared.runnability;
+      }
+
+      if (!runnability?.canRun || !runnability.entryPoint) {
+        toast.error("This repo is not runnable in BrowserPod yet");
+        return;
+      }
+
       await runProject(runnability.entryPoint);
       if (repo?.id) {
         setStoredRunIntent(repo.id, true);
@@ -212,7 +222,7 @@ export function RepoPage() {
     } finally {
       setIsRunActionPending(false);
     }
-  }, [isRunActionPending, repo?.id, repo?.runnability, runProject, snapshot.runnability]);
+  }, [bootstrapRepo, isRunActionPending, repo?.githubUrl, repo?.id, repo?.runnability, runProject, snapshot.fileTree, snapshot.runnability]);
 
   const handleStop = useCallback(async () => {
     if (isRunActionPending) {
@@ -240,6 +250,17 @@ export function RepoPage() {
       return;
     }
 
+    const cachedTree = loadCachedFileTree(repo.id);
+    const fallbackTree = repo.fileTree ?? cachedTree;
+    const shouldRestoreRun =
+      searchParams.get("run") === "true" ||
+      hasStoredRunIntent(repo.id) ||
+      repo.status === "running";
+
+    if (!shouldRestoreRun && fallbackTree && repo.status !== "cloning") {
+      return;
+    }
+
     bootedRepoRef.current = repo.id;
     setBootstrapError(undefined);
 
@@ -248,16 +269,15 @@ export function RepoPage() {
         setFileTree(nextTree);
         saveCachedFileTree(repo.id, nextTree);
 
-        void collectAiExtractionPayload(nextTree)
-          .then((payload) => api.ai.extract(repo.id, payload))
-          .catch((syncError: unknown) => {
-            console.debug("[DevHub] source cache refresh failed:", syncError);
-          });
+        const shouldSyncExtraction = repo.status === "cloning" || (!repo.analysis && !repo.aiReadme);
 
-        const shouldRestoreRun =
-          searchParams.get("run") === "true" ||
-          hasStoredRunIntent(repo.id) ||
-          repo.status === "running";
+        if (shouldSyncExtraction) {
+          void collectAiExtractionPayload(nextTree)
+            .then((payload) => api.ai.extract(repo.id, payload))
+            .catch((syncError: unknown) => {
+              console.debug("[DevHub] source cache refresh failed:", syncError);
+            });
+        }
 
         if (!autoRunRef.current && shouldRestoreRun) {
           autoRunRef.current = true;
@@ -281,19 +301,21 @@ export function RepoPage() {
   }, [bootAttempt, bootstrapRepo, collectAiExtractionPayload, repo, runProject, searchParams, selectFile]);
 
   useEffect(() => {
-    if (activeTab !== "ai-readme" || !repoId || aiReadme || isAiLoading) {
+    const needsExtraction = activeTab === "functions" ? !extraction : !aiReadme;
+
+    if ((activeTab !== "ai-readme" && activeTab !== "functions") || !repoId || !needsExtraction || isAiLoading) {
       return;
     }
 
-    const requestKey = `${repoId}:${repo?.status ?? "unknown"}`;
+    const requestKey = `${repoId}:${activeTab}:${repo?.status ?? "unknown"}`;
 
     if (aiReadmeRequestRef.current === requestKey) {
       return;
     }
 
     aiReadmeRequestRef.current = requestKey;
-    void loadAiReadme();
-  }, [activeTab, aiReadme, isAiLoading, loadAiReadme, repo?.status, repoId]);
+    void loadExtraction();
+  }, [activeTab, aiReadme, extraction, isAiLoading, loadExtraction, repo?.status, repoId]);
 
   useEffect(() => {
     if (!snapshot.portalUrl || registeredPortalRef.current === snapshot.portalUrl) {
@@ -446,6 +468,7 @@ export function RepoPage() {
                 <TabsList className="mb-2">
                   <TabsTrigger value="code">Code</TabsTrigger>
                   <TabsTrigger value="ai-readme">AI Readme</TabsTrigger>
+                  <TabsTrigger value="functions">Functions</TabsTrigger>
                   <TabsTrigger value="live">Live Preview</TabsTrigger>
                   <TabsTrigger value="chat">Chat</TabsTrigger>
                 </TabsList>
@@ -467,6 +490,16 @@ export function RepoPage() {
                   isLoading={isAiLoading}
                   error={aiError}
                   onRetry={() => void loadAiReadme()}
+                />
+              </TabsContent>
+
+              <TabsContent value="functions" className="min-h-[36rem] rounded-lg border border-border bg-background">
+                <FunctionsViewer
+                  extraction={extraction}
+                  isLoading={isAiLoading}
+                  error={aiError}
+                  repoName={repo?.name}
+                  onRetry={() => void loadExtraction()}
                 />
               </TabsContent>
 
