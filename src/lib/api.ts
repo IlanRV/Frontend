@@ -6,6 +6,7 @@ import type {
   ChatMessage,
   ChatReplyResponse,
   CreateWorkspacePayload,
+  ExtractAiResponse,
   ExtractAiPayload,
   Repo,
   Workspace,
@@ -217,7 +218,7 @@ export const api = {
   },
   ai: {
     extract: (repoId: string, payload: ExtractAiPayload) =>
-      apiFetch<{ success: boolean; extractionId: string; status: string }>(`/ai/extract/${repoId}`, {
+      apiFetch<ExtractAiResponse>(`/ai/extract/${repoId}`, {
         method: "POST",
         json: payload,
       }),
