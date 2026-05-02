@@ -1,4 +1,4 @@
-export type RepoStatus = "cloning" | "ready" | "running" | "error";
+export type RepoStatus = "cloning" | "analyzing" | "ready" | "running" | "error";
 
 export type FileNodeType = "file" | "directory";
 
@@ -29,6 +29,7 @@ export interface FileTreeNode {
 
 export interface Workspace {
   id: string;
+  workspaceId: string;
   name: string;
   description: string;
   repoCount: number;
@@ -39,14 +40,17 @@ export interface Workspace {
 
 export interface Repo {
   id: string;
+  repoId: string;
   workspaceId: string;
   name: string;
   githubUrl: string;
   status: RepoStatus;
   description?: string;
   runnable?: boolean;
+  runnability?: RunnabilityResult | null;
   runScript?: string;
   portalUrl?: string;
+  aiReadme?: string | null;
   aiReadmeStatus?: "pending" | "ready" | "error" | string;
   createdAt: string;
   updatedAt?: string;
@@ -63,7 +67,7 @@ export interface AddRepoPayload {
 
 export interface RunnabilityResult {
   canRun: boolean;
-  entryPoint?: "dev" | "start" | "serve";
+  entryPoint?: "dev" | "start" | "serve" | string | null;
   blockers: string[];
 }
 
@@ -118,9 +122,11 @@ export type ChatRole = "user" | "assistant";
 
 export interface ChatMessage {
   id: string;
+  messageId?: string;
   role: ChatRole;
   content: string;
   createdAt: string;
+  timestamp?: string;
 }
 
 export interface ChatHistoryResponse {
