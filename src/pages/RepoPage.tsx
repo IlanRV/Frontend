@@ -5,6 +5,7 @@ import {
   ChevronUp,
   ExternalLink,
   Menu,
+  Power,
   RotateCw,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -26,7 +27,7 @@ import { usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
 import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
 import { cn } from "@/lib/utils";
-import type { FileTreeNode } from "@/types";
+import type { FileTreeNode, RunnabilityResult } from "@/types";
 
 function findFirstSupportedFile(node: FileTreeNode): string | undefined {
   if (node.type === "file" && node.supported) {
@@ -56,6 +57,90 @@ function isBusyPodState(state: string) {
   return state === "booting" || state === "cloning" || state === "installing" || state === "stopping";
 }
 
+const REPO_CACHE_VERSION = 1;
+const MAX_CACHED_FILES = 20;
+
+interface RepoBrowserPodCache {
+  version: typeof REPO_CACHE_VERSION;
+  repoId: string;
+  repoUrl?: string;
+  fileTree?: FileTreeNode;
+  runnability?: RunnabilityResult;
+  selectedPath?: string;
+  files: Record<string, string>;
+  updatedAt: string;
+}
+
+function repoCacheKey(repoId: string) {
+  return `devhub:repo-cache:${repoId}`;
+}
+
+function readRepoCache(repoId: string | undefined) {
+  if (!repoId || typeof window === "undefined") {
+    return undefined;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(repoCacheKey(repoId));
+    if (!raw) {
+      return undefined;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<RepoBrowserPodCache>;
+    if (parsed.version !== REPO_CACHE_VERSION || parsed.repoId !== repoId) {
+      return undefined;
+    }
+
+    return {
+      ...parsed,
+      files: parsed.files ?? {},
+    } as RepoBrowserPodCache;
+  } catch (error) {
+    console.debug("[BrowserPod] repo cache read failed:", error);
+    return undefined;
+  }
+}
+
+function writeRepoCache(repoId: string | undefined, patch: Partial<RepoBrowserPodCache>) {
+  if (!repoId || typeof window === "undefined") {
+    return;
+  }
+
+  try {
+    const previous = readRepoCache(repoId);
+    const next: RepoBrowserPodCache = {
+      version: REPO_CACHE_VERSION,
+      repoId,
+      files: previous?.files ?? {},
+      updatedAt: new Date().toISOString(),
+      ...previous,
+      ...patch,
+    };
+
+    window.localStorage.setItem(repoCacheKey(repoId), JSON.stringify(next));
+  } catch (error) {
+    console.debug("[BrowserPod] repo cache write failed:", error);
+  }
+}
+
+function cacheFileContent(repoId: string | undefined, path: string, content: string) {
+  if (!repoId) {
+    return;
+  }
+
+  const previous = readRepoCache(repoId);
+  const files = { ...(previous?.files ?? {}) };
+  delete files[path];
+  files[path] = content;
+
+  while (Object.keys(files).length > MAX_CACHED_FILES) {
+    const oldestPath = Object.keys(files)[0];
+    delete files[oldestPath];
+  }
+
+  writeRepoCache(repoId, { files, selectedPath: path });
+}
+
 export function RepoPage() {
   const { id: workspaceId, repoId } = useParams<{ id: string; repoId: string }>();
   const [searchParams] = useSearchParams();
@@ -78,6 +163,7 @@ export function RepoPage() {
     readFile,
     runProject,
     stopProject,
+    terminate,
   } = usePod(repoId);
 
   const [fileTree, setFileTree] = useState<FileTreeNode | undefined>();
@@ -85,12 +171,15 @@ export function RepoPage() {
   const [fileContent, setFileContent] = useState("");
   const [fileError, setFileError] = useState<string | undefined>();
   const [isFileLoading, setIsFileLoading] = useState(false);
+  const [cachedRunnability, setCachedRunnability] = useState<RunnabilityResult | undefined>();
   const [bootstrapError, setBootstrapError] = useState<string | undefined>();
   const [activeTab, setActiveTab] = useState("code");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [bootAttempt, setBootAttempt] = useState(0);
   const bootedRepoRef = useRef<string | undefined>();
+  const manuallyClosedRef = useRef(false);
+  const bootstrapPromiseRef = useRef<Promise<{ fileTree: FileTreeNode; runnability: RunnabilityResult }> | undefined>();
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
   const aiReadmeRequestRef = useRef<string | undefined>();
@@ -113,26 +202,100 @@ export function RepoPage() {
     aiReadmeRequestRef.current = undefined;
   }, [repoId]);
 
+  useEffect(() => {
+    manuallyClosedRef.current = false;
+    bootedRepoRef.current = undefined;
+    bootstrapPromiseRef.current = undefined;
+    setFileTree(undefined);
+    setSelectedPath(undefined);
+    setFileContent("");
+    setFileError(undefined);
+    setCachedRunnability(undefined);
+
+    const cached = readRepoCache(repoId);
+    if (!cached) {
+      return;
+    }
+
+    setFileTree(cached.fileTree);
+    setCachedRunnability(cached.runnability);
+
+    if (cached.selectedPath) {
+      setSelectedPath(cached.selectedPath);
+      setFileContent(cached.files[cached.selectedPath] ?? "");
+    }
+  }, [repoId]);
+
   const selectFile = useCallback(
     async (path: string) => {
+      const cachedContent = readRepoCache(repoId)?.files[path];
+
       setSelectedPath(path);
       setFileError(undefined);
-      setIsFileLoading(true);
+      writeRepoCache(repoId, { selectedPath: path });
+
+      if (cachedContent !== undefined) {
+        setFileContent(cachedContent);
+        setIsFileLoading(false);
+      } else {
+        setFileContent("");
+        setIsFileLoading(true);
+      }
 
       try {
-        setFileContent(await readFile(path));
+        const content = await readFile(path);
+        setFileContent(content);
+        cacheFileContent(repoId, path, content);
         setActiveTab("code");
       } catch (readError) {
-        setFileError(readError instanceof Error ? readError.message : "Unable to read file");
+        if (cachedContent === undefined) {
+          setFileError(readError instanceof Error ? readError.message : "Unable to read file");
+        } else {
+          console.debug("[BrowserPod] using cached file content:", readError);
+        }
       } finally {
         setIsFileLoading(false);
       }
     },
-    [readFile],
+    [readFile, repoId],
   );
 
+  const effectiveRunnability = snapshot.runnability ?? cachedRunnability ?? repo?.runnability ?? undefined;
+
+  const startBootstrap = useCallback(() => {
+    if (!repo?.githubUrl) {
+      return Promise.reject(new Error("Repo URL is not loaded yet"));
+    }
+
+    manuallyClosedRef.current = false;
+
+    if (bootstrapPromiseRef.current) {
+      return bootstrapPromiseRef.current;
+    }
+
+    const promise = bootstrapRepo(repo.githubUrl)
+      .then((result) => {
+        setFileTree(result.fileTree);
+        setCachedRunnability(result.runnability);
+        writeRepoCache(repoId, {
+          repoUrl: repo.githubUrl,
+          fileTree: result.fileTree,
+          runnability: result.runnability,
+        });
+        return result;
+      })
+      .finally(() => {
+        if (bootstrapPromiseRef.current === promise) {
+          bootstrapPromiseRef.current = undefined;
+        }
+      });
+
+    bootstrapPromiseRef.current = promise;
+    return promise;
+  }, [bootstrapRepo, repo?.githubUrl, repoId]);
+
   const handleRun = useCallback(async () => {
-    const runnability = snapshot.runnability;
+    let runnability = effectiveRunnability;
 
     if (!runnability?.canRun || !runnability.entryPoint) {
       toast.error("This repo is not runnable in BrowserPod yet");
@@ -140,6 +303,16 @@ export function RepoPage() {
     }
 
     try {
+      if (!snapshot.fileTree || !snapshot.runnability) {
+        toast.message("Preparing BrowserPod from cached repo info");
+        runnability = (await startBootstrap()).runnability;
+      }
+
+      if (!runnability.canRun || !runnability.entryPoint) {
+        toast.error("This repo is not runnable in BrowserPod yet");
+        return;
+      }
+
       await runProject(runnability.entryPoint);
       setActiveTab("live");
       setIsConsoleOpen(true);
@@ -147,7 +320,7 @@ export function RepoPage() {
     } catch (runError) {
       toast.error(runError instanceof Error ? runError.message : "Unable to run project");
     }
-  }, [runProject, snapshot.runnability]);
+  }, [effectiveRunnability, runProject, snapshot.fileTree, snapshot.runnability, startBootstrap]);
 
   const handleStop = useCallback(async () => {
     try {
@@ -159,20 +332,32 @@ export function RepoPage() {
     }
   }, [registerStop, stopProject]);
 
+  const handleClosePod = useCallback(async () => {
+    try {
+      bootstrapPromiseRef.current = undefined;
+      bootedRepoRef.current = undefined;
+      manuallyClosedRef.current = true;
+      await terminate();
+      toast.success("BrowserPod closed");
+    } catch (closeError) {
+      toast.error(closeError instanceof Error ? closeError.message : "Unable to close BrowserPod");
+    }
+  }, [terminate]);
+
   useEffect(() => {
-    if (!repo?.githubUrl || bootedRepoRef.current === repo.id) {
+    if (!repo?.githubUrl || manuallyClosedRef.current || bootedRepoRef.current === repo.id) {
       return;
     }
 
     bootedRepoRef.current = repo.id;
     setBootstrapError(undefined);
 
-    void bootstrapRepo(repo.githubUrl)
+    void startBootstrap()
       .then(({ fileTree: nextTree, runnability }) => {
         setFileTree(nextTree);
         saveCachedFileTree(repo.id, nextTree);
-        const firstFile = findFirstSupportedFile(nextTree);
-        if (firstFile) {
+        const firstFile = readRepoCache(repoId)?.selectedPath ?? selectedPath ?? findFirstSupportedFile(nextTree);
+        if (firstFile && firstFile !== selectedPath) {
           void selectFile(firstFile);
         }
 
@@ -190,7 +375,7 @@ export function RepoPage() {
         bootedRepoRef.current = undefined;
         setBootstrapError(bootError instanceof Error ? bootError.message : "Unable to prepare BrowserPod");
       });
-  }, [bootAttempt, bootstrapRepo, repo, runProject, searchParams, selectFile]);
+  }, [bootAttempt, repo?.githubUrl, repo?.id, repoId, runProject, searchParams, selectFile, selectedPath, startBootstrap]);
 
   useEffect(() => {
     if (activeTab !== "ai-readme" || !repoId || aiReadme || isAiLoading) {
@@ -219,9 +404,10 @@ export function RepoPage() {
   }, [registerRun, snapshot.portalUrl]);
 
   const isRunning = snapshot.state === "running";
-  const isBusy = isBusyPodState(snapshot.state);
+  const effectiveFileTree = snapshot.fileTree ?? fileTree ?? repo?.fileTree ?? undefined;
+  const isPreparingWithCache = Boolean(effectiveFileTree && effectiveRunnability) && (snapshot.state === "booting" || snapshot.state === "cloning");
+  const isBusy = isBusyPodState(snapshot.state) && !isPreparingWithCache;
   const portalUrl = snapshot.portalUrl ?? repo?.portalUrl;
-  const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
   const isTreeLoading =
     isLoading ||
     ((snapshot.state === "booting" || snapshot.state === "cloning") && !effectiveFileTree);
@@ -261,14 +447,18 @@ export function RepoPage() {
           <Button variant="outline" size="icon" onClick={() => setIsSidebarOpen((open) => !open)} title="Toggle file tree">
             <Menu className="h-4 w-4" />
           </Button>
-          <RunnabilityBadge result={snapshot.runnability} />
+          <RunnabilityBadge result={effectiveRunnability} />
           <RunButton
-            canRun={Boolean(snapshot.runnability?.canRun)}
+            canRun={Boolean(effectiveRunnability?.canRun)}
             isRunning={isRunning}
             isBusy={isBusy}
             onRun={() => void handleRun()}
             onStop={() => void handleStop()}
           />
+          <Button variant="outline" size="sm" onClick={() => void handleClosePod()} title="Close BrowserPod">
+            <Power className="h-4 w-4" />
+            Close Pod
+          </Button>
           {portalUrl && (
             <Button variant="outline" size="sm" asChild>
               <a href={portalUrl} target="_blank" rel="noreferrer">
@@ -294,6 +484,7 @@ export function RepoPage() {
               size="sm"
               className="mt-3"
               onClick={() => {
+                manuallyClosedRef.current = false;
                 bootedRepoRef.current = undefined;
                 setBootAttempt((attempt) => attempt + 1);
                 void refresh();

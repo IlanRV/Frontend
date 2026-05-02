@@ -529,6 +529,7 @@ function extractMarkedPayload(output: string, markerId: string) {
 export class PodLifecycleManager {
   private pod?: BrowserPod;
   private terminal?: Terminal;
+  private terminalHost?: HTMLElement;
   private captureTerminal?: Terminal;
   private captureTerminalHost?: HTMLDivElement;
   private captureQueue: Promise<void> = Promise.resolve();
@@ -536,7 +537,7 @@ export class PodLifecycleManager {
   private snapshot: PodSnapshot;
   private readonly apiKey: string;
   private readonly storageKey: string;
-  private readonly onSnapshot: (snapshot: PodSnapshot) => void;
+  private onSnapshot: (snapshot: PodSnapshot) => void;
 
   constructor(options: PodLifecycleManagerOptions) {
     this.apiKey = options.apiKey;
@@ -547,6 +548,11 @@ export class PodLifecycleManager {
 
   getSnapshot() {
     return this.snapshot;
+  }
+
+  setSnapshotListener(onSnapshot: (snapshot: PodSnapshot) => void) {
+    this.onSnapshot = onSnapshot;
+    this.onSnapshot(this.snapshot);
   }
 
   private emit(partial: Partial<PodSnapshot>) {
@@ -585,6 +591,20 @@ export class PodLifecycleManager {
       console.error("[BrowserPod] command failed:", { command, args, cwd: options.cwd, error });
       throw error;
     }
+  }
+
+  private async attachTerminal(terminalHost: HTMLElement) {
+    if (!this.pod) {
+      throw new Error("BrowserPod is not ready yet");
+    }
+
+    if (this.terminal && this.terminalHost === terminalHost) {
+      return;
+    }
+
+    this.terminal = await this.pod.createDefaultTerminal(terminalHost);
+    this.terminalHost = terminalHost;
+    console.debug("[BrowserPod] terminal attached");
   }
 
   private async getCaptureTerminal() {
@@ -694,6 +714,7 @@ export class PodLifecycleManager {
   async boot(terminalHost: HTMLElement) {
     if (this.pod) {
       console.debug("[BrowserPod] already booted, reusing pod");
+      await this.attachTerminal(terminalHost);
       return this.pod;
     }
 
@@ -715,8 +736,7 @@ export class PodLifecycleManager {
 
       this.pod = await BrowserPod.boot(bootOptions);
       console.debug("[BrowserPod] BrowserPod.boot() resolved successfully");
-      this.terminal = await this.pod.createDefaultTerminal(terminalHost);
-      console.debug("[BrowserPod] terminal created");
+      await this.attachTerminal(terminalHost);
       this.pod.onPortal(({ url }) => {
         console.debug("[BrowserPod] portal opened:", url);
         this.emit({ portalUrl: url });
@@ -1045,6 +1065,7 @@ export class PodLifecycleManager {
 
     this.pod = undefined;
     this.terminal = undefined;
+    this.terminalHost = undefined;
     this.captureTerminal = undefined;
     this.captureTerminalHost?.remove();
     this.captureTerminalHost = undefined;
