@@ -24,6 +24,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
+import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
 import { cn } from "@/lib/utils";
 import type { FileTreeNode } from "@/types";
 
@@ -93,6 +94,24 @@ export function RepoPage() {
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
   const aiReadmeRequestRef = useRef<string | undefined>();
+  const activeRepoRef = useRef<string | undefined>();
+
+  useEffect(() => {
+    if (activeRepoRef.current === repoId) {
+      return;
+    }
+
+    activeRepoRef.current = repoId;
+    setFileTree(undefined);
+    setSelectedPath(undefined);
+    setFileContent("");
+    setFileError(undefined);
+    setBootstrapError(undefined);
+    setActiveTab("code");
+    autoRunRef.current = false;
+    registeredPortalRef.current = undefined;
+    aiReadmeRequestRef.current = undefined;
+  }, [repoId]);
 
   const selectFile = useCallback(
     async (path: string) => {
@@ -151,6 +170,7 @@ export function RepoPage() {
     void bootstrapRepo(repo.githubUrl)
       .then(({ fileTree: nextTree, runnability }) => {
         setFileTree(nextTree);
+        saveCachedFileTree(repo.id, nextTree);
         const firstFile = findFirstSupportedFile(nextTree);
         if (firstFile) {
           void selectFile(firstFile);
@@ -201,6 +221,23 @@ export function RepoPage() {
   const isRunning = snapshot.state === "running";
   const isBusy = isBusyPodState(snapshot.state);
   const portalUrl = snapshot.portalUrl ?? repo?.portalUrl;
+  const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
+  const isTreeLoading =
+    isLoading ||
+    ((snapshot.state === "booting" || snapshot.state === "cloning") && !effectiveFileTree);
+
+  useEffect(() => {
+    if (!repo?.id || fileTree) {
+      return;
+    }
+
+    const cachedTree = loadCachedFileTree(repo.id);
+    const fallbackTree = repo.fileTree ?? cachedTree;
+
+    if (fallbackTree) {
+      setFileTree(fallbackTree);
+    }
+  }, [fileTree, repo?.fileTree, repo?.id]);
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -278,7 +315,7 @@ export function RepoPage() {
         >
           {isSidebarOpen && (
             <aside className="min-h-[36rem] overflow-hidden rounded-lg border border-border bg-background">
-              {isLoading || snapshot.state === "booting" || snapshot.state === "cloning" ? (
+              {isTreeLoading ? (
                 <div className="space-y-3 p-4">
                   <Skeleton className="h-8 w-full" />
                   <Skeleton className="h-8 w-4/5" />
@@ -286,7 +323,7 @@ export function RepoPage() {
                   <Skeleton className="h-8 w-5/6" />
                 </div>
               ) : (
-                <FileTree tree={fileTree ?? snapshot.fileTree} selectedPath={selectedPath} onSelectFile={selectFile} />
+                <FileTree tree={effectiveFileTree} selectedPath={selectedPath} onSelectFile={selectFile} />
               )}
             </aside>
           )}

@@ -65,6 +65,7 @@ const IGNORED_DIRECTORIES = [
 const MAX_AI_FILES = 100;
 const MAX_AI_FILE_BYTES = 250_000;
 const REPO_ROOT = "/home/user/repo";
+const FILE_TREE_RETRY_DELAYS_MS = [0, 350, 800, 1400];
 
 interface PodLifecycleManagerOptions {
   repoId: string;
@@ -114,6 +115,10 @@ type TerminablePod = BrowserPod & {
   close?: () => Promise<void> | void;
 };
 
+type BrowserPodBootOptions = Parameters<typeof BrowserPod.boot>[0] & {
+  storageKey?: string;
+};
+
 export function createInitialPodSnapshot(repoId: string): PodSnapshot {
   return {
     repoId,
@@ -124,6 +129,16 @@ export function createInitialPodSnapshot(repoId: string): PodSnapshot {
 
 function nowIso() {
   return new Date().toISOString();
+}
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms);
+  });
+}
+
+function browserPodStorageKey(repoId: string) {
+  return `devhub-${repoId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
 function readableBrowserPodBootError(error: unknown) {
@@ -219,6 +234,10 @@ function flattenSupportedFiles(node: FileTreeNode, output: FileTreeNode[] = []) 
   }
 
   return output;
+}
+
+function hasTreeEntries(node: FileTreeNode) {
+  return (node.children?.length ?? 0) > 0;
 }
 
 function normalizeFileTree(value: unknown): FileTreeNode {
@@ -323,6 +342,114 @@ try {
 `;
 }
 
+function buildGitTreeScript(rootPath: string, markerId: string) {
+  return `
+const fs = require("fs");
+const path = require("path");
+const { execFileSync } = require("child_process");
+
+const root = ${JSON.stringify(rootPath)};
+const beginMarker = "__DEVHUB_BEGIN_${markerId}__";
+const endMarker = "__DEVHUB_END_${markerId}__";
+const supported = new Set(${JSON.stringify(SUPPORTED_EXTENSIONS)});
+
+function emitPayload(value) {
+  const base64 = Buffer.from(value, "utf-8").toString("base64");
+
+  console.log(beginMarker);
+  for (let index = 0; index < base64.length; index += 16000) {
+    console.log(base64.slice(index, index + 16000));
+  }
+  console.log(endMarker);
+}
+
+function extFromPath(filePath) {
+  if (filePath === ".env" || filePath.endsWith(".env")) return ".env";
+  if (filePath === ".gitignore" || filePath.endsWith("/.gitignore")) return ".gitignore";
+  const lastDot = filePath.lastIndexOf(".");
+  return lastDot === -1 ? "" : filePath.slice(lastDot);
+}
+
+function sortChildren(node) {
+  if (!node.children) return node;
+
+  node.children.sort((a, b) => {
+    if (a.type !== b.type) return a.type === "directory" ? -1 : 1;
+    return a.name.localeCompare(b.name);
+  });
+  node.children.forEach(sortChildren);
+  return node;
+}
+
+function ensureDirectory(rootNode, parts) {
+  let current = rootNode;
+
+  for (let index = 0; index < parts.length; index += 1) {
+    const name = parts[index];
+    const directoryPath = parts.slice(0, index + 1).join("/");
+    let next = current.children.find(
+      (child) => child.type === "directory" && child.path === directoryPath
+    );
+
+    if (!next) {
+      next = {
+        name,
+        path: directoryPath,
+        type: "directory",
+        children: []
+      };
+      current.children.push(next);
+    }
+
+    current = next;
+  }
+
+  return current;
+}
+
+try {
+  console.log("[DevHub git tree] cwd=" + process.cwd());
+  const rawFiles = execFileSync("git", ["ls-files", "-z"], {
+    cwd: root,
+    encoding: "utf8"
+  });
+  const files = rawFiles.split("\\0").filter(Boolean);
+  const tree = { name: "repo", path: "", type: "directory", children: [] };
+
+  for (const relative of files) {
+    const parts = relative.split("/").filter(Boolean);
+    const name = parts.pop();
+    if (!name) continue;
+
+    const parent = ensureDirectory(tree, parts);
+    const fullPath = path.join(root, relative);
+    let size = 0;
+
+    try {
+      size = fs.statSync(fullPath).size;
+    } catch {}
+
+    const extension = extFromPath(relative);
+    parent.children.push({
+      name,
+      path: relative,
+      type: "file",
+      extension,
+      size,
+      supported: supported.has(extension)
+    });
+  }
+
+  const json = JSON.stringify(sortChildren(tree));
+  console.log("[DevHub git tree] serialized " + Buffer.byteLength(json, "utf-8") + " bytes");
+  emitPayload(json);
+} catch (error) {
+  console.error("[DevHub git tree] failed", error && error.stack ? error.stack : error);
+  process.exit(1);
+}
+`;
+}
+
 function buildReadTextFileScript(inputPath: string, markerId: string) {
   return `
 const fs = require("fs");
@@ -408,10 +535,12 @@ export class PodLifecycleManager {
   private runningProcess?: Process;
   private snapshot: PodSnapshot;
   private readonly apiKey: string;
+  private readonly storageKey: string;
   private readonly onSnapshot: (snapshot: PodSnapshot) => void;
 
   constructor(options: PodLifecycleManagerOptions) {
     this.apiKey = options.apiKey;
+    this.storageKey = browserPodStorageKey(options.repoId);
     this.onSnapshot = options.onSnapshot;
     this.snapshot = createInitialPodSnapshot(options.repoId);
   }
@@ -578,10 +707,13 @@ export class PodLifecycleManager {
     this.log("Booting BrowserPod with Node 22");
 
     try {
-      this.pod = await BrowserPod.boot({
+      const bootOptions: BrowserPodBootOptions = {
         apiKey: this.apiKey,
         nodeVersion: "22",
-      });
+        storageKey: this.storageKey,
+      };
+
+      this.pod = await BrowserPod.boot(bootOptions);
       console.debug("[BrowserPod] BrowserPod.boot() resolved successfully");
       this.terminal = await this.pod.createDefaultTerminal(terminalHost);
       console.debug("[BrowserPod] terminal created");
@@ -612,7 +744,7 @@ export class PodLifecycleManager {
       await this.runCommand("rm", ["-rf", REPO_ROOT], { echo: false });
       await this.runCommand("git", ["clone", "--depth", "1", repoUrl, REPO_ROOT]);
       console.debug("[BrowserPod] clone complete, building file tree");
-      const fileTree = await this.refreshFileTree();
+      const fileTree = await this.refreshFileTreeWithRetries();
       console.debug("[BrowserPod] file tree built:", fileTree);
       const runnability = await this.checkRunnability();
       console.debug("[BrowserPod] runnability:", runnability);
@@ -697,11 +829,8 @@ export class PodLifecycleManager {
     return this.readRuntimeTextFile(`${REPO_ROOT}/${normalized}`);
   }
 
-  async refreshFileTree() {
-    const markerId = crypto.randomUUID();
-
-    console.debug("[BrowserPod] refreshing file tree through stdout:", { markerId });
-    const output = await this.runNodeScriptWithOutput(buildTreeScript(REPO_ROOT, markerId), {
+  private async loadFileTreeFromScript(script: string, markerId: string) {
+    const output = await this.runNodeScriptWithOutput(script, {
       cwd: REPO_ROOT,
       echo: false,
     });
@@ -711,9 +840,62 @@ export class PodLifecycleManager {
     if (!treeJson.trim()) {
       throw new Error("BrowserPod produced an empty file tree response");
     }
-    const tree = normalizeFileTree(JSON.parse(treeJson));
-    this.emit({ fileTree: tree });
-    return tree;
+
+    return normalizeFileTree(JSON.parse(treeJson) as unknown);
+  }
+
+  private async refreshFileTreeWithRetries() {
+    let lastError: unknown;
+    let lastTree: FileTreeNode | undefined;
+
+    for (let attempt = 0; attempt < FILE_TREE_RETRY_DELAYS_MS.length; attempt += 1) {
+      const delay = FILE_TREE_RETRY_DELAYS_MS[attempt];
+
+      if (delay > 0) {
+        this.log("Waiting for cloned files to settle before reading the tree");
+        await sleep(delay);
+      }
+
+      try {
+        const tree = await this.refreshFileTree();
+        lastTree = tree;
+
+        if (hasTreeEntries(tree)) {
+          return tree;
+        }
+      } catch (error) {
+        lastError = error;
+        console.debug("[BrowserPod] file tree refresh attempt failed:", {
+          attempt: attempt + 1,
+          error,
+        });
+      }
+    }
+
+    if (lastTree) {
+      throw new Error("BrowserPod cloned the repo, but no files were reported by the filesystem or git index");
+    }
+
+    throw lastError instanceof Error ? lastError : new Error("Unable to read file tree from BrowserPod");
+  }
+
+  async refreshFileTree() {
+    const markerId = crypto.randomUUID();
+
+    console.debug("[BrowserPod] refreshing file tree through stdout:", { markerId });
+    const tree = await this.loadFileTreeFromScript(buildTreeScript(REPO_ROOT, markerId), markerId);
+
+    if (hasTreeEntries(tree)) {
+      this.emit({ fileTree: tree });
+      return tree;
+    }
+
+    console.debug("[BrowserPod] filesystem tree was empty, falling back to git index");
+    this.log("Filesystem tree was empty, checking git index");
+    const gitMarkerId = crypto.randomUUID();
+    const gitTree = await this.loadFileTreeFromScript(buildGitTreeScript(REPO_ROOT, gitMarkerId), gitMarkerId);
+    this.emit({ fileTree: gitTree });
+    return gitTree;
   }
 
   async checkRunnability(): Promise<RunnabilityResult> {

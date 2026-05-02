@@ -15,6 +15,7 @@ import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { usePod } from "@/hooks/usePod";
+import { saveCachedFileTree } from "@/lib/fileTreeCache";
 import type { Repo } from "@/types";
 
 interface AddRepoModalProps {
@@ -52,6 +53,7 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
 
       setPhase("Booting BrowserPod and cloning repo");
       const { fileTree } = await pod.bootstrapRepo(trimmedUrl);
+      saveCachedFileTree(repo.id, fileTree);
 
       setPhase("Sending source context for AI extraction");
       const payload = await pod.collectAiExtractionPayload(fileTree);

@@ -50,6 +50,7 @@ export interface Repo {
   runnability?: RunnabilityResult | null;
   runScript?: string;
   portalUrl?: string;
+  fileTree?: FileTreeNode | null;
   aiReadme?: string | null;
   aiReadmeStatus?: "pending" | "ready" | "error" | string;
   createdAt: string;

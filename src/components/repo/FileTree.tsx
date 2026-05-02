@@ -125,6 +125,7 @@ function initialExpandedPaths(tree?: FileTreeNode) {
 export function FileTree({ tree, selectedPath, onSelectFile, className }: FileTreeProps) {
   const initialPaths = useMemo(() => initialExpandedPaths(tree), [tree]);
   const [expanded, setExpanded] = useState<Set<string>>(initialPaths);
+  const hasChildren = (tree?.children?.length ?? 0) > 0;
 
   useEffect(() => {
     setExpanded(initialPaths);
@@ -158,14 +159,20 @@ export function FileTree({ tree, selectedPath, onSelectFile, className }: FileTr
           Reset
         </Button>
       </div>
-      <TreeNode
-        node={tree}
-        depth={0}
-        expanded={expanded}
-        selectedPath={selectedPath}
-        onToggle={handleToggle}
-        onSelectFile={onSelectFile}
-      />
+      {hasChildren ? (
+        <TreeNode
+          node={tree}
+          depth={0}
+          expanded={expanded}
+          selectedPath={selectedPath}
+          onToggle={handleToggle}
+          onSelectFile={onSelectFile}
+        />
+      ) : (
+        <div className="px-2 py-8 text-center text-sm text-muted-foreground">
+          No files were found for this repo yet.
+        </div>
+      )}
     </div>
   );
 }
