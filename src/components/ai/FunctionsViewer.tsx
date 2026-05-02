@@ -160,7 +160,7 @@ function FunctionCard({ functionDoc }: { functionDoc: FunctionDoc }) {
 
 export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetry }: FunctionsViewerProps) {
   const [query, setQuery] = useState("");
-  const functions = extraction?.functions ?? [];
+  const functions = useMemo(() => extraction?.functions ?? [], [extraction?.functions]);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredFunctions = useMemo(
     () =>

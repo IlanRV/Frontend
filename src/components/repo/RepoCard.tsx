@@ -1,4 +1,5 @@
 import { Bot, ExternalLink, GitBranch, Play } from "lucide-react";
+import { KeyboardEvent } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -30,10 +31,19 @@ export function RepoCard({ repo, active, onOpen, onRun }: RepoCardProps) {
   const canRun = repo.runnability?.canRun ?? repo.runnable ?? false;
   const hasAiReadme = repo.aiReadmeStatus === "ready" || Boolean(repo.aiReadme);
 
+  function handleKeyDown(event: KeyboardEvent<HTMLElement>) {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      onOpen();
+    }
+  }
+
   return (
-    <button
-      type="button"
+    <article
+      role="button"
+      tabIndex={0}
       onClick={onOpen}
+      onKeyDown={handleKeyDown}
       className={cn(
         "w-full rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active && "border-primary/70 bg-accent/50",
@@ -79,6 +89,6 @@ export function RepoCard({ repo, active, onOpen, onRun }: RepoCardProps) {
           </Badge>
         )}
       </div>
-    </button>
+    </article>
   );
 }
