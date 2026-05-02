@@ -1,4 +1,8 @@
-import { Bot, RotateCw } from "lucide-react";
+import { Bot, Check, Copy, RotateCw } from "lucide-react";
+import { useMemo, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
+import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -11,7 +15,63 @@ interface AiReadmeViewerProps {
   onRetry?: () => void;
 }
 
+function listSection(title: string, items: string[] | undefined) {
+  if (!items?.length) {
+    return "";
+  }
+
+  return [`## ${title}`, "", ...items.map((item) => `- ${item}`), ""].join("\n");
+}
+
+function buildMarkdownReadme(readme: AiReadme) {
+  if (readme.raw?.trim()) {
+    return readme.raw.trim();
+  }
+
+  const sections = [
+    `# ${readme.title ?? "AI README"}`,
+    "",
+    readme.summary?.trim() ?? "",
+    "",
+    listSection("Stack", readme.stack),
+    readme.runCommand ? ["## Run", "", `\`${readme.runCommand}\``, ""].join("\n") : "",
+    listSection("Setup", readme.setup),
+    readme.notableFiles?.length
+      ? [
+          "## Notable Files",
+          "",
+          ...readme.notableFiles.map((file) => `- \`${file.path}\`: ${file.note}`),
+          "",
+        ].join("\n")
+      : "",
+    listSection("Risks", readme.risks),
+  ];
+
+  return sections
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function AiReadmeViewer({ readme, isLoading, error, onRetry }: AiReadmeViewerProps) {
+  const [hasCopied, setHasCopied] = useState(false);
+  const markdown = useMemo(() => (readme ? buildMarkdownReadme(readme) : ""), [readme]);
+
+  async function handleCopy() {
+    if (!markdown) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(markdown);
+      setHasCopied(true);
+      toast.success("AI README copied");
+      window.setTimeout(() => setHasCopied(false), 1600);
+    } catch {
+      toast.error("Unable to copy README");
+    }
+  }
+
   if (isLoading) {
     return (
       <div className="space-y-4 p-4">
@@ -47,89 +107,27 @@ export function AiReadmeViewer({ readme, isLoading, error, onRetry }: AiReadmeVi
   }
 
   return (
-    <article className="space-y-6 p-4">
-      <header className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300">
-          <Bot className="h-5 w-5" />
+    <article className="p-4">
+      <header className="mb-5 flex flex-col gap-3 border-b border-border pb-4 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-3">
+          <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300">
+            <Bot className="h-5 w-5" />
+          </div>
+          <div className="min-w-0">
+            <h2 className="truncate text-xl font-semibold">{readme.title ?? "AI README"}</h2>
+            <p className="text-sm text-muted-foreground">Rendered Markdown README</p>
+          </div>
         </div>
-        <div>
-          <h2 className="text-xl font-semibold">{readme.title ?? "AI README"}</h2>
-          {readme.runCommand && (
-            <p className="text-sm text-muted-foreground">Run command: {readme.runCommand}</p>
-          )}
-        </div>
+
+        <Button type="button" variant="outline" size="sm" className="w-fit shrink-0" onClick={() => void handleCopy()}>
+          {hasCopied ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+          {hasCopied ? "Copied" : "Copy"}
+        </Button>
       </header>
 
-      {readme.summary && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-normal text-muted-foreground">Summary</h3>
-          <p className="whitespace-pre-wrap text-sm leading-6">{readme.summary}</p>
-        </section>
-      )}
-
-      {readme.stack && readme.stack.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-normal text-muted-foreground">Stack</h3>
-          <div className="flex flex-wrap gap-2">
-            {readme.stack.map((item) => (
-              <span key={item} className="rounded-md border border-border px-2 py-1 text-xs">
-                {item}
-              </span>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {readme.setup && readme.setup.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-normal text-muted-foreground">Setup</h3>
-          <ol className="space-y-2 text-sm">
-            {readme.setup.map((step, index) => (
-              <li key={`${step}-${index}`} className="rounded-md border border-border bg-card px-3 py-2">
-                {step}
-              </li>
-            ))}
-          </ol>
-        </section>
-      )}
-
-      {readme.notableFiles && readme.notableFiles.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-normal text-muted-foreground">
-            Notable files
-          </h3>
-          <div className="space-y-2">
-            {readme.notableFiles.map((file) => (
-              <div key={file.path} className="rounded-md border border-border bg-card px-3 py-2 text-sm">
-                <div className="font-mono text-xs text-cyan-700 dark:text-cyan-300">{file.path}</div>
-                <p className="mt-1 text-muted-foreground">{file.note}</p>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {readme.risks && readme.risks.length > 0 && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-normal text-muted-foreground">Risks</h3>
-          <ul className="space-y-2 text-sm">
-            {readme.risks.map((risk) => (
-              <li key={risk} className="rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-amber-800 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-300">
-                {risk}
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-
-      {readme.raw && (
-        <section>
-          <h3 className="mb-2 text-sm font-semibold uppercase tracking-normal text-muted-foreground">Raw notes</h3>
-          <pre className="whitespace-pre-wrap rounded-lg border border-border bg-muted/40 p-4 text-sm leading-6">
-            {readme.raw}
-          </pre>
-        </section>
-      )}
+      <div className="markdown-body">
+        <ReactMarkdown remarkPlugins={[remarkGfm]}>{markdown}</ReactMarkdown>
+      </div>
     </article>
   );
 }
