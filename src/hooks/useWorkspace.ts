@@ -3,6 +3,8 @@ import { useCallback, useEffect, useState } from "react";
 import { api } from "@/lib/api";
 import type { CreateWorkspacePayload, Repo, Workspace } from "@/types";
 
+const ACTIVE_REPO_STATUSES = new Set(["cloning", "analyzing"]);
+
 interface AsyncState<T> {
   data?: T;
   error?: string;
@@ -131,6 +133,20 @@ export function useWorkspace(workspaceId: string | undefined) {
   useEffect(() => {
     void refresh();
   }, [refresh]);
+
+  useEffect(() => {
+    const hasActiveRepo = (state.data?.repos ?? []).some((repo) => ACTIVE_REPO_STATUSES.has(repo.status));
+
+    if (!hasActiveRepo) {
+      return;
+    }
+
+    const timeoutId = window.setTimeout(() => {
+      void refresh();
+    }, 3000);
+
+    return () => window.clearTimeout(timeoutId);
+  }, [refresh, state.data?.repos]);
 
   return {
     workspace: state.data,

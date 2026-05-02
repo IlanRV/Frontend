@@ -27,8 +27,8 @@ function statusVariant(status: RepoStatus) {
 }
 
 export function RepoCard({ repo, active, onOpen, onRun }: RepoCardProps) {
-  const canRun = repo.runnable ?? (repo.status === "ready" || repo.status === "running");
-  const hasAiReadme = repo.aiReadmeStatus === "ready" || Boolean(repo.aiReadmeStatus);
+  const canRun = repo.runnability?.canRun ?? repo.runnable ?? false;
+  const hasAiReadme = repo.aiReadmeStatus === "ready" || Boolean(repo.aiReadme);
 
   return (
     <button
