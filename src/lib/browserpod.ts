@@ -64,6 +64,7 @@ const IGNORED_DIRECTORIES = [
 
 const MAX_AI_FILES = 100;
 const MAX_AI_FILE_BYTES = 250_000;
+const REPO_ROOT = "/home/user/repo";
 
 interface PodLifecycleManagerOptions {
   repoId: string;
@@ -75,6 +76,14 @@ interface PodRunOptions {
   cwd?: string;
   echo?: boolean;
 }
+
+interface XtermLike {
+  write(data: string | Uint8Array, callback?: () => void): void;
+}
+
+type InternalTerminal = Terminal & {
+  xterm?: XtermLike;
+};
 
 interface PackageJson {
   scripts?: Record<string, string>;
@@ -228,14 +237,26 @@ function normalizeFileTree(value: unknown): FileTreeNode {
   };
 }
 
-function buildTreeScript(outputPath: string) {
+function buildTreeScript(rootPath: string, markerId: string) {
   return `
 const fs = require("fs");
 const path = require("path");
 
-const root = "/repo";
+const root = ${JSON.stringify(rootPath)};
+const beginMarker = "__DEVHUB_BEGIN_${markerId}__";
+const endMarker = "__DEVHUB_END_${markerId}__";
 const supported = new Set(${JSON.stringify(SUPPORTED_EXTENSIONS)});
 const ignored = new Set(${JSON.stringify(IGNORED_DIRECTORIES)});
+
+function emitPayload(value) {
+  const base64 = Buffer.from(value, "utf-8").toString("base64");
+
+  console.log(beginMarker);
+  for (let index = 0; index < base64.length; index += 16000) {
+    console.log(base64.slice(index, index + 16000));
+  }
+  console.log(endMarker);
+}
 
 function extFromPath(filePath) {
   if (filePath === ".env" || filePath.endsWith(".env")) return ".env";
@@ -279,13 +300,101 @@ function walk(fullPath) {
   };
 }
 
-fs.writeFileSync(${JSON.stringify(outputPath)}, JSON.stringify(walk(root)));
+try {
+  console.log("[DevHub tree] cwd=" + process.cwd());
+  const tree = walk(root);
+  const json = JSON.stringify(tree);
+  console.log("[DevHub tree] serialized " + Buffer.byteLength(json, "utf-8") + " bytes");
+  emitPayload(json);
+} catch (error) {
+  console.error("[DevHub tree] failed", error && error.stack ? error.stack : error);
+  process.exit(1);
+}
 `;
+}
+
+function buildReadTextFileScript(inputPath: string, markerId: string) {
+  return `
+const fs = require("fs");
+
+const inputPath = ${JSON.stringify(inputPath)};
+const beginMarker = "__DEVHUB_BEGIN_${markerId}__";
+const endMarker = "__DEVHUB_END_${markerId}__";
+
+function emitPayload(value) {
+  const base64 = Buffer.from(value, "utf-8").toString("base64");
+
+  console.log(beginMarker);
+  for (let index = 0; index < base64.length; index += 16000) {
+    console.log(base64.slice(index, index + 16000));
+  }
+  console.log(endMarker);
+}
+
+try {
+  console.log("[DevHub read] input=" + inputPath);
+  const content = fs.readFileSync(inputPath, "utf-8");
+  console.log("[DevHub read] read " + Buffer.byteLength(content, "utf-8") + " bytes");
+  emitPayload(content);
+} catch (error) {
+  console.error("[DevHub read] failed", error && error.stack ? error.stack : error);
+  process.exit(1);
+}
+`;
+}
+
+function commandPreview(command: string, args: string[]) {
+  const value = [command, ...args].join(" ");
+  return value.length > 240 ? `${value.slice(0, 240)}...` : value;
+}
+
+function terminalChunkToText(chunk: string | Uint8Array) {
+  return typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
+}
+
+function decodeBase64Utf8(value: string) {
+  const binary = atob(value);
+  const bytes = new Uint8Array(binary.length);
+
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+
+  return new TextDecoder().decode(bytes);
+}
+
+function extractMarkedPayload(output: string, markerId: string) {
+  const beginMarker = `__DEVHUB_BEGIN_${markerId}__`;
+  const endMarker = `__DEVHUB_END_${markerId}__`;
+  const beginIndex = output.indexOf(beginMarker);
+  const endIndex = output.indexOf(endMarker);
+
+  if (beginIndex === -1 || endIndex === -1 || endIndex <= beginIndex) {
+    console.error("[BrowserPod] marked payload missing:", {
+      markerId,
+      outputPreview: output.slice(0, 1000),
+      outputLength: output.length,
+    });
+    throw new Error("BrowserPod command did not return a readable payload");
+  }
+
+  const payload = output
+    .slice(beginIndex + beginMarker.length, endIndex)
+    .replace(/\s/g, "");
+
+  if (!payload) {
+    throw new Error("BrowserPod command returned an empty payload");
+  }
+
+  return decodeBase64Utf8(payload);
 }
 
 export class PodLifecycleManager {
   private pod?: BrowserPod;
   private terminal?: Terminal;
+  private captureTerminal?: Terminal;
+  private captureTerminalHost?: HTMLDivElement;
+  private captureQueue: Promise<void> = Promise.resolve();
   private runningProcess?: Process;
   private snapshot: PodSnapshot;
   private readonly apiKey: string;
@@ -321,24 +430,140 @@ export class PodLifecycleManager {
       throw new Error("BrowserPod is not ready yet");
     }
 
-    this.log(`$ ${[command, ...args].join(" ")}`);
+    const preview = commandPreview(command, args);
+    console.debug("[BrowserPod] command start:", { command, args, cwd: options.cwd });
+    this.log(`$ ${preview}`);
 
-    return this.pod.run(command, args, {
-      terminal: this.terminal,
-      cwd: options.cwd,
-      echo: options.echo ?? true,
-    });
+    try {
+      const process = await this.pod.run(command, args, {
+        terminal: this.terminal,
+        cwd: options.cwd,
+        echo: options.echo ?? true,
+      });
+      console.debug("[BrowserPod] command finished:", preview);
+      return process;
+    } catch (error) {
+      console.error("[BrowserPod] command failed:", { command, args, cwd: options.cwd, error });
+      throw error;
+    }
+  }
+
+  private async getCaptureTerminal() {
+    if (!this.pod) {
+      throw new Error("BrowserPod is not ready yet");
+    }
+
+    if (this.captureTerminal) {
+      return this.captureTerminal;
+    }
+
+    const host = document.createElement("div");
+    host.style.cssText = [
+      "position: fixed",
+      "left: -10000px",
+      "top: 0",
+      "width: 800px",
+      "height: 400px",
+      "opacity: 0",
+      "pointer-events: none",
+      "overflow: hidden",
+    ].join(";");
+    document.body.appendChild(host);
+
+    this.captureTerminalHost = host;
+    this.captureTerminal = await this.pod.createDefaultTerminal(host);
+    console.debug("[BrowserPod] hidden capture terminal created");
+
+    return this.captureTerminal;
+  }
+
+  private async runCommandWithOutput(command: string, args: string[], options: PodRunOptions = {}) {
+    const run = async () => {
+      if (!this.pod) {
+        throw new Error("BrowserPod is not ready yet");
+      }
+
+      const terminal = (await this.getCaptureTerminal()) as InternalTerminal;
+
+      if (!terminal.xterm) {
+        throw new Error("BrowserPod capture terminal is not available");
+      }
+
+      const preview = commandPreview(command, args);
+      const originalWrite = terminal.xterm.write.bind(terminal.xterm);
+      let output = "";
+
+      terminal.xterm.write = (chunk, callback) => {
+        output += terminalChunkToText(chunk);
+        originalWrite(chunk, callback);
+      };
+
+      console.debug("[BrowserPod] capture command start:", { command, args, cwd: options.cwd });
+      this.log(`$ ${preview}`);
+
+      try {
+        await this.pod.run(command, args, {
+          terminal,
+          cwd: options.cwd,
+          echo: options.echo ?? false,
+        });
+        console.debug("[BrowserPod] capture command finished:", {
+          preview,
+          outputLength: output.length,
+          outputPreview: output.slice(0, 1000),
+        });
+        return output;
+      } catch (error) {
+        console.error("[BrowserPod] capture command failed:", {
+          command,
+          args,
+          cwd: options.cwd,
+          outputPreview: output.slice(0, 1000),
+          error,
+        });
+        throw error;
+      } finally {
+        terminal.xterm.write = originalWrite;
+      }
+    };
+
+    const result = this.captureQueue.then(run, run);
+    this.captureQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+
+    return result;
+  }
+
+  private async runNodeScriptWithOutput(script: string, options: PodRunOptions = {}) {
+    const scriptPath = `/home/user/.devhub-script-${crypto.randomUUID()}.js`;
+
+    await this.writeTextFile(scriptPath, script);
+
+    try {
+      return await this.runCommandWithOutput("node", [scriptPath], options);
+    } finally {
+      void this.runCommand("rm", ["-f", scriptPath], { cwd: "/home/user", echo: false }).catch(
+        (error: unknown) => {
+          console.debug("[BrowserPod] failed to remove temp script:", error);
+        },
+      );
+    }
   }
 
   async boot(terminalHost: HTMLElement) {
     if (this.pod) {
+      console.debug("[BrowserPod] already booted, reusing pod");
       return this.pod;
     }
 
     if (!this.apiKey || this.apiKey === "your_browserpod_api_key") {
+      console.error("[BrowserPod] missing or placeholder API key");
       throw new Error("Set VITE_BP_APIKEY in .env before booting BrowserPod");
     }
 
+    console.debug("[BrowserPod] booting with Node 22, apiKey prefix:", this.apiKey.slice(0, 10) + "...");
     this.emit({ state: "booting", error: undefined });
     this.log("Booting BrowserPod with Node 22");
 
@@ -347,15 +572,20 @@ export class PodLifecycleManager {
         apiKey: this.apiKey,
         nodeVersion: "22",
       });
+      console.debug("[BrowserPod] BrowserPod.boot() resolved successfully");
       this.terminal = await this.pod.createDefaultTerminal(terminalHost);
+      console.debug("[BrowserPod] terminal created");
       this.pod.onPortal(({ url }) => {
+        console.debug("[BrowserPod] portal opened:", url);
         this.emit({ portalUrl: url });
         this.log(`Portal opened: ${url}`);
       });
       this.emit({ state: "ready" });
       this.log("BrowserPod ready");
+      console.debug("[BrowserPod] ready");
       return this.pod;
     } catch (error) {
+      console.error("[BrowserPod] boot failed:", error);
       const message = error instanceof Error ? error.message : "BrowserPod failed to boot";
       this.emit({ state: "error", error: message });
       this.log(message, "stderr");
@@ -364,17 +594,22 @@ export class PodLifecycleManager {
   }
 
   async cloneRepo(repoUrl: string) {
+    console.debug("[BrowserPod] cloning repo:", repoUrl);
     this.emit({ state: "cloning", error: undefined, fileTree: undefined });
     this.log(`Cloning ${repoUrl}`);
 
     try {
-      await this.runCommand("rm", ["-rf", "/repo"], { echo: false });
-      await this.runCommand("git", ["clone", "--depth", "1", repoUrl, "/repo"]);
+      await this.runCommand("rm", ["-rf", REPO_ROOT], { echo: false });
+      await this.runCommand("git", ["clone", "--depth", "1", repoUrl, REPO_ROOT]);
+      console.debug("[BrowserPod] clone complete, building file tree");
       const fileTree = await this.refreshFileTree();
+      console.debug("[BrowserPod] file tree built:", fileTree);
       const runnability = await this.checkRunnability();
+      console.debug("[BrowserPod] runnability:", runnability);
       this.emit({ state: "ready", fileTree, runnability });
       return { fileTree, runnability };
     } catch (error) {
+      console.error("[BrowserPod] cloneRepo failed:", error);
       const message = error instanceof Error ? error.message : "Repo clone failed";
       this.emit({ state: "error", error: message });
       this.log(message, "stderr");
@@ -387,7 +622,15 @@ export class PodLifecycleManager {
       throw new Error("BrowserPod is not ready yet");
     }
 
-    const file = await this.pod.openFile(path, "utf-8");
+    console.debug("[BrowserPod] opening text file:", path);
+
+    let file: BinaryFile | TextFile;
+    try {
+      file = await this.pod.openFile(path, "utf-8");
+    } catch (error) {
+      console.error("[BrowserPod] openFile failed:", { path, error });
+      throw error;
+    }
 
     if (!isTextFile(file)) {
       await file.close();
@@ -395,6 +638,7 @@ export class PodLifecycleManager {
     }
 
     const size = await file.getSize();
+    console.debug("[BrowserPod] text file opened:", { path, size });
     let remaining = size;
     let content = "";
 
@@ -414,25 +658,50 @@ export class PodLifecycleManager {
       throw new Error("BrowserPod is not ready yet");
     }
 
+    console.debug("[BrowserPod] creating text file:", { path, bytes: content.length });
     const file = await this.pod.createFile(path, "utf-8");
     const writable = toWritableTextFile(file);
     await writable.write(content);
     await writable.close();
+    console.debug("[BrowserPod] text file created:", path);
+  }
+
+  async readRuntimeTextFile(path: string) {
+    const markerId = crypto.randomUUID();
+
+    console.debug("[BrowserPod] reading runtime text file through stdout:", {
+      path,
+      markerId,
+    });
+
+    const output = await this.runNodeScriptWithOutput(buildReadTextFileScript(path, markerId), {
+      cwd: REPO_ROOT,
+      echo: false,
+    });
+
+    return extractMarkedPayload(output, markerId);
   }
 
   async readRepoFile(path: string) {
     const normalized = path.replace(/^\/+/, "");
-    return this.readTextFile(`/repo/${normalized}`);
+    return this.readRuntimeTextFile(`${REPO_ROOT}/${normalized}`);
   }
 
   async refreshFileTree() {
-    const outputPath = `/tmp/devhub-tree-${crypto.randomUUID()}.json`;
-    const scriptPath = `/tmp/devhub-tree-${crypto.randomUUID()}.js`;
+    const markerId = crypto.randomUUID();
 
-    await this.writeTextFile(scriptPath, buildTreeScript(outputPath));
-    await this.runCommand("node", [scriptPath], { cwd: "/repo", echo: false });
+    console.debug("[BrowserPod] refreshing file tree through stdout:", { markerId });
+    const output = await this.runNodeScriptWithOutput(buildTreeScript(REPO_ROOT, markerId), {
+      cwd: REPO_ROOT,
+      echo: false,
+    });
 
-    const tree = normalizeFileTree(JSON.parse(await this.readTextFile(outputPath)));
+    const treeJson = extractMarkedPayload(output, markerId);
+    console.debug("[BrowserPod] file tree JSON loaded:", { bytes: treeJson.length });
+    if (!treeJson.trim()) {
+      throw new Error("BrowserPod produced an empty file tree response");
+    }
+    const tree = normalizeFileTree(JSON.parse(treeJson));
     this.emit({ fileTree: tree });
     return tree;
   }
@@ -513,20 +782,24 @@ export class PodLifecycleManager {
   }
 
   async runProject(entryPoint: RunScriptName) {
+    console.debug("[BrowserPod] runProject, entryPoint:", entryPoint);
     this.emit({ state: "installing", error: undefined });
     this.log("Installing npm dependencies");
-    await this.runCommand("npm", ["install"], { cwd: "/repo" });
+    await this.runCommand("npm", ["install"], { cwd: REPO_ROOT });
+    console.debug("[BrowserPod] npm install complete, starting project");
 
     this.emit({ state: "running", portalUrl: undefined });
     this.log(`Starting npm script: ${entryPoint}`);
 
-    const runPromise = this.runCommand("npm", ["run", entryPoint], { cwd: "/repo" });
+    const runPromise = this.runCommand("npm", ["run", entryPoint], { cwd: REPO_ROOT });
 
     void runPromise
       .then((process) => {
+        console.debug("[BrowserPod] project process started:", process);
         this.runningProcess = process;
       })
       .catch((error: unknown) => {
+        console.error("[BrowserPod] project process error:", error);
         const message = error instanceof Error ? error.message : "Project process stopped";
         if (this.snapshot.state === "running") {
           this.emit({ state: "error", error: message });
@@ -536,6 +809,7 @@ export class PodLifecycleManager {
   }
 
   async stopProject() {
+    console.debug("[BrowserPod] stopProject");
     this.emit({ state: "stopping" });
     this.log("Stopping project");
 
@@ -546,7 +820,7 @@ export class PodLifecycleManager {
       await maybeKill.call(process);
     } else {
       try {
-        await this.runCommand("pkill", ["-f", "npm run"], { cwd: "/repo", echo: false });
+        await this.runCommand("pkill", ["-f", "npm run"], { cwd: REPO_ROOT, echo: false });
       } catch {
         this.log("No killable BrowserPod process handle was available");
       }
@@ -557,19 +831,31 @@ export class PodLifecycleManager {
   }
 
   async terminate() {
+    console.debug("[BrowserPod] terminate");
     if (this.snapshot.state === "running" || this.snapshot.state === "installing") {
-      await this.stopProject();
+      try {
+        await this.stopProject();
+      } catch (error) {
+        console.debug("[BrowserPod] stop during terminate failed:", error);
+      }
     }
 
     const pod = this.pod as TerminablePod | undefined;
     const maybeTerminate = pod?.terminate ?? pod?.close;
 
     if (maybeTerminate) {
-      await maybeTerminate.call(pod);
+      try {
+        await maybeTerminate.call(pod);
+      } catch (error) {
+        console.debug("[BrowserPod] pod terminate failed:", error);
+      }
     }
 
     this.pod = undefined;
     this.terminal = undefined;
+    this.captureTerminal = undefined;
+    this.captureTerminalHost?.remove();
+    this.captureTerminalHost = undefined;
     this.runningProcess = undefined;
     this.emit({ state: "idle", portalUrl: undefined });
   }

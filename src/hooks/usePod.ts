@@ -18,22 +18,65 @@ function browserPodApiKey() {
 export function usePod(repoId: string | undefined) {
   const terminalRef = useRef<HTMLDivElement | null>(null);
   const managerRef = useRef<PodLifecycleManager | null>(null);
+  const terminateTimerRef = useRef<number | undefined>();
   const fallbackRepoId = useRef(`temp-${crypto.randomUUID()}`);
+  const managerRepoIdRef = useRef(repoId ?? fallbackRepoId.current);
   const [snapshot, setSnapshot] = useState<PodSnapshot>(
     createInitialPodSnapshot(repoId ?? fallbackRepoId.current),
   );
 
+  const cancelPendingTerminate = useCallback(() => {
+    if (terminateTimerRef.current === undefined) {
+      return;
+    }
+
+    window.clearTimeout(terminateTimerRef.current);
+    terminateTimerRef.current = undefined;
+  }, []);
+
   const getManager = useCallback(() => {
+    cancelPendingTerminate();
+
+    const nextRepoId = repoId ?? fallbackRepoId.current;
+
+    if (managerRef.current && managerRepoIdRef.current !== nextRepoId) {
+      void managerRef.current.terminate().catch((error: unknown) => {
+        console.debug("[BrowserPod] previous manager cleanup failed:", error);
+      });
+      managerRef.current = null;
+    }
+
     if (!managerRef.current) {
+      managerRepoIdRef.current = nextRepoId;
       managerRef.current = new PodLifecycleManager({
-        repoId: repoId ?? fallbackRepoId.current,
+        repoId: nextRepoId,
         apiKey: browserPodApiKey(),
         onSnapshot: setSnapshot,
       });
     }
 
     return managerRef.current;
-  }, [repoId]);
+  }, [cancelPendingTerminate, repoId]);
+
+  const scheduleTerminate = useCallback(() => {
+    if (terminateTimerRef.current !== undefined || !managerRef.current) {
+      return;
+    }
+
+    const manager = managerRef.current;
+
+    terminateTimerRef.current = window.setTimeout(() => {
+      terminateTimerRef.current = undefined;
+
+      if (managerRef.current === manager) {
+        managerRef.current = null;
+      }
+
+      void manager.terminate().catch((error: unknown) => {
+        console.debug("[BrowserPod] scheduled cleanup failed:", error);
+      });
+    }, 500);
+  }, []);
 
   const boot = useCallback(async () => {
     if (!terminalRef.current) {
@@ -85,16 +128,20 @@ export function usePod(repoId: string | undefined) {
   }, [getManager]);
 
   const terminate = useCallback(async () => {
-    await managerRef.current?.terminate();
+    cancelPendingTerminate();
+
+    const manager = managerRef.current;
     managerRef.current = null;
-  }, []);
+    await manager?.terminate();
+  }, [cancelPendingTerminate]);
 
   useEffect(() => {
+    cancelPendingTerminate();
+
     return () => {
-      void managerRef.current?.terminate();
-      managerRef.current = null;
+      scheduleTerminate();
     };
-  }, [repoId]);
+  }, [cancelPendingTerminate, scheduleTerminate]);
 
   return {
     terminalRef,

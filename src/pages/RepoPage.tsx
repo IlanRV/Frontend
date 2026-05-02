@@ -167,6 +167,7 @@ export function RepoPage() {
         }
       })
       .catch((bootError: unknown) => {
+        bootedRepoRef.current = undefined;
         setBootstrapError(bootError instanceof Error ? bootError.message : "Unable to prepare BrowserPod");
       });
   }, [bootAttempt, bootstrapRepo, repo, runProject, searchParams, selectFile]);
