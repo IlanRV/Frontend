@@ -72,6 +72,12 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
             ? await api.chat.sendWorkspace(scope.id, content)
             : await api.chat.sendRepo(scope.id, content);
 
+        if (response.degraded) {
+          toast.warning("AI provider is unavailable, showing saved-context fallback");
+        } else if (response.cached) {
+          toast.info("Reused the previous reply for this duplicate message");
+        }
+
         setMessages((current) => [
           ...current,
           {

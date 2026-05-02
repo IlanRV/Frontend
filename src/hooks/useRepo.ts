@@ -21,6 +21,7 @@ export function useRepo(repoId: string | undefined) {
     isLoading: Boolean(repoId),
     isAiLoading: false,
   });
+  const [pollAttempt, setPollAttempt] = useState(0);
 
   const refresh = useCallback(async () => {
     if (!repoId) {
@@ -93,15 +94,19 @@ export function useRepo(repoId: string | undefined) {
     const status = state.repo?.status;
 
     if (!repoId || (status !== "cloning" && status !== "analyzing")) {
+      if (pollAttempt !== 0) {
+        setPollAttempt(0);
+      }
       return;
     }
 
-    const intervalId = window.setInterval(() => {
-      void refresh();
-    }, 2000);
+    const delay = Math.min(8000, 2000 * 2 ** Math.min(pollAttempt, 2));
+    const timeoutId = window.setTimeout(() => {
+      void refresh().finally(() => setPollAttempt((attempt) => attempt + 1));
+    }, delay);
 
-    return () => window.clearInterval(intervalId);
-  }, [refresh, repoId, state.repo?.status]);
+    return () => window.clearTimeout(timeoutId);
+  }, [pollAttempt, refresh, repoId, state.repo?.status]);
 
   return {
     repo: state.repo,

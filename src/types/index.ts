@@ -119,6 +119,14 @@ export interface ExtractAiPayload {
   }>;
 }
 
+export interface ExtractAiResponse {
+  success: boolean;
+  extractionId: string;
+  status: RepoStatus;
+  cached?: boolean;
+  deduped?: boolean;
+}
+
 export type ChatRole = "user" | "assistant";
 
 export interface ChatMessage {
@@ -136,6 +144,8 @@ export interface ChatHistoryResponse {
 
 export interface ChatReplyResponse {
   reply: string;
+  degraded?: boolean;
+  cached?: boolean;
 }
 
 export interface ApiErrorShape {

@@ -57,13 +57,12 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
 
       setPhase("Sending source context for AI extraction");
       const payload = await pod.collectAiExtractionPayload(fileTree);
-      await api.ai.extract(repo.id, payload);
+      const extraction = await api.ai.extract(repo.id, payload);
 
-      toast.success("Repo added and AI extraction started");
+      toast.success(extraction.cached ? "Repo added with cached AI extraction" : "Repo added and AI extraction started");
       setGithubUrl("");
       onComplete();
       onOpenChange(false);
-      await pod.terminate();
     } catch (error) {
       if (repo) {
         await api.repos.delete(repo.id).catch(() => undefined);
