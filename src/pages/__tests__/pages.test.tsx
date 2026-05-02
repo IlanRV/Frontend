@@ -200,7 +200,7 @@ describe("DashboardPage", () => {
     expect(screen.getByText("1/3 workspaces used.")).toBeInTheDocument();
   });
 
-  it("renders loading and error states", () => {
+  it("renders loading and error states", async () => {
     mockedUseWorkspaces.mockReturnValueOnce({
       workspaces: [],
       isLoading: true,
@@ -227,6 +227,25 @@ describe("DashboardPage", () => {
       </MemoryRouter>,
     );
     expect(screen.getByText("load failed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("opens the create modal from the empty workspace state", async () => {
+    mockedUseWorkspaces.mockReturnValueOnce({
+      workspaces: [],
+      isLoading: false,
+      error: undefined,
+      refresh: vi.fn(),
+      createWorkspace: vi.fn(),
+      deleteWorkspace: vi.fn(),
+    });
+    renderWithRouter("/dashboard", <DashboardPage />);
+
+    expect(screen.getByText("No workspaces yet")).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
+
+    expect(screen.getByRole("dialog")).toHaveTextContent("Create workspace");
   });
 
   it("asks before deleting workspaces", async () => {
@@ -247,6 +266,24 @@ describe("DashboardPage", () => {
     await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("workspace-1"));
     expect(toast.success).toHaveBeenCalledWith("Workspace deleted");
   });
+
+  it("cancels workspace deletes", async () => {
+    const deleteWorkspace = vi.fn();
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    mockedUseWorkspaces.mockReturnValueOnce({
+      workspaces: [makeWorkspace()],
+      isLoading: false,
+      error: undefined,
+      refresh: vi.fn(),
+      createWorkspace: vi.fn(),
+      deleteWorkspace,
+    });
+    renderWithRouter("/dashboard", <DashboardPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete workspace" }));
+
+    expect(deleteWorkspace).not.toHaveBeenCalled();
+  });
 });
 
 describe("WorkspacePage", () => {
@@ -259,19 +296,40 @@ describe("WorkspacePage", () => {
     expect(screen.getByText("Repo route")).toBeInTheDocument();
   });
 
-  it("renders errors and empty repo states", () => {
+  it("renders errors and empty repo states", async () => {
+    const refresh = vi.fn();
     mockedUseWorkspace.mockReturnValueOnce({
       workspace: undefined,
       repos: [],
       isLoading: false,
       error: "workspace failed",
-      refresh: vi.fn(),
+      refresh,
       addRepo: vi.fn(),
       updateRepo: vi.fn(),
     });
     renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
 
     expect(screen.getByText("workspace failed")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+    expect(refresh).toHaveBeenCalledOnce();
+  });
+
+  it("opens the add-repo modal from an empty workspace", async () => {
+    mockedUseWorkspace.mockReturnValueOnce({
+      workspace: makeWorkspace(),
+      repos: [],
+      isLoading: false,
+      error: undefined,
+      refresh: vi.fn(),
+      addRepo: vi.fn(),
+      updateRepo: vi.fn(),
+    });
+    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
+
+    expect(screen.getByText("No repos yet")).toBeInTheDocument();
+    await userEvent.click(screen.getAllByRole("button", { name: /Add Repo/ }).at(-1)!);
+
+    expect(screen.getByTestId("add-repo-modal")).toHaveTextContent("open");
   });
 });
 
@@ -297,6 +355,57 @@ describe("RepoPage", () => {
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
   });
 
+  it("stops running projects and clears run intent", async () => {
+    window.localStorage.setItem("devhub:repo-run-intent:repo-1", "true");
+    const stopProject = vi.fn().mockResolvedValue(undefined);
+    const registerStop = vi.fn().mockResolvedValue(makeRepo({ status: "ready" }));
+    const pod = podHook();
+    mockedUsePod.mockReturnValue({
+      ...pod,
+      snapshot: { ...pod.snapshot, state: "running" },
+      stopProject,
+    });
+    mockedUseRepo.mockReturnValue(repoHook({ registerStop }));
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    await waitFor(() => expect(stopProject).toHaveBeenCalledOnce());
+    expect(registerStop).toHaveBeenCalledOnce();
+    expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBeNull();
+    expect(toast.success).toHaveBeenCalledWith("Project stopped");
+  });
+
+  it("registers BrowserPod portal URLs once they appear", async () => {
+    const registerRun = vi.fn().mockResolvedValue(makeRepo({ status: "running" }));
+    mockedUseRepo.mockReturnValue(repoHook({ registerRun }));
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example"));
+    expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
+  });
+
+  it("loads AI tabs and renders live and chat panels", async () => {
+    const loadExtraction = vi.fn();
+    mockedUseRepo.mockReturnValue(repoHook({ extraction: undefined, aiReadme: undefined, loadExtraction }));
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("tab", { name: "AI Readme" }));
+    await waitFor(() => expect(loadExtraction).toHaveBeenCalledOnce());
+    expect(screen.getByTestId("ai-readme")).toHaveTextContent("no readme");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Functions" }));
+    await waitFor(() => expect(loadExtraction).toHaveBeenCalledTimes(2));
+    expect(screen.getByTestId("functions-viewer")).toHaveTextContent("frontend functions");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
+    expect(screen.getByTestId("portal-preview")).toHaveTextContent("https://portal.example");
+
+    await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
+    expect(screen.getByTestId("chat-panel")).toHaveTextContent("Repo AI");
+  });
+
   it("falls back to backend file reads when BrowserPod is not readable", async () => {
     const readFile = vi.fn();
     mockedUsePod.mockReturnValueOnce({
@@ -308,6 +417,60 @@ describe("RepoPage", () => {
 
     await waitFor(() => expect(screen.getByTestId("file-viewer")).toHaveTextContent("README.md:"));
     expect(readFile).not.toHaveBeenCalled();
+  });
+
+  it("falls back to backend reads after BrowserPod read failures", async () => {
+    const readFile = vi.fn().mockRejectedValue(new Error("pod failed"));
+    mockedUsePod.mockReturnValueOnce({
+      ...podHook(),
+      readFile,
+    });
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await waitFor(() => expect(screen.getByTestId("file-viewer")).toHaveTextContent("README.md:backend read"));
+    expect(readFile).toHaveBeenCalledWith("README.md");
+  });
+
+  it("shows backend file read errors", async () => {
+    vi.mocked(mockedApi.repos.getFile).mockRejectedValueOnce(new Error("backend down"));
+    mockedUsePod.mockReturnValueOnce({
+      ...podHook(),
+      snapshot: { repoId: "repo-1", state: "idle", terminal: [], fileTree: makeFileTree(), runnability: makeRunnability() },
+      readFile: vi.fn(),
+    });
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await waitFor(() => expect(screen.getByTestId("file-viewer")).toHaveTextContent("backend down"));
+  });
+
+  it("toggles the file tree sidebar", async () => {
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByRole("button", { name: /File tree/ })).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle("Toggle file tree"));
+
+    expect(screen.queryByRole("button", { name: /File tree/ })).not.toBeInTheDocument();
+  });
+
+  it("shows bootstrap errors and retries repo refresh", async () => {
+    const bootstrapRepo = vi.fn().mockRejectedValue(new Error("boot failed"));
+    const refresh = vi.fn();
+    mockedUseRepo.mockReturnValue(repoHook({
+      repo: makeRepo({ status: "cloning", fileTree: null, analysis: null, aiReadme: null }),
+      refresh,
+    }));
+    mockedUsePod.mockReturnValue({
+      ...podHook(),
+      snapshot: { repoId: "repo-1", state: "idle", terminal: [] },
+      bootstrapRepo,
+    });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await waitFor(() => expect(screen.getByText("boot failed")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
+
+    expect(refresh).toHaveBeenCalledOnce();
   });
 
   it("shows repo and bootstrap errors", () => {

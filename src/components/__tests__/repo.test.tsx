@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -97,6 +97,35 @@ describe("FileViewer", () => {
     expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-theme", "vs-dark");
     expect(screen.getByText("src/App.tsx")).toBeInTheDocument();
   });
+
+  it.each([
+    ["index.ts", "typescript"],
+    ["index.js", "javascript"],
+    ["index.jsx", "javascript"],
+    ["package.json", "json"],
+    ["README.md", "markdown"],
+    ["styles.css", "css"],
+    ["index.html", "html"],
+    ["script.py", "python"],
+    ["workflow.yml", "yaml"],
+    ["workflow.yaml", "yaml"],
+    [".env", "shell"],
+    [".gitignore", "shell"],
+    ["notes.txt", "plaintext"],
+  ])("detects %s as %s", (path, language) => {
+    render(<FileViewer path={path} content="content" />);
+
+    expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-language", language);
+  });
+
+  it("updates the editor theme when the document theme changes", async () => {
+    render(<FileViewer path="index.js" content="console.log('hi')" />);
+
+    expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-theme", "light");
+    document.documentElement.classList.add("dark");
+
+    await waitFor(() => expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-theme", "vs-dark"));
+  });
 });
 
 describe("PortalPreview", () => {
@@ -157,6 +186,46 @@ describe("repo controls", () => {
     expect(onOpen).not.toHaveBeenCalled();
     await userEvent.click(screen.getByText("frontend"));
     expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it("renders repo card status variants and active state", () => {
+    const onOpen = vi.fn();
+    const onRun = vi.fn();
+    const { rerender } = render(<RepoCard active repo={makeRepo({ status: "ready" })} onOpen={onOpen} onRun={onRun} />);
+
+    expect(screen.getByRole("button", { name: /frontend/ })).toHaveClass("border-primary/70");
+    for (const status of ["running", "error", "cloning", "analyzing"] as const) {
+      rerender(<RepoCard repo={makeRepo({ status })} onOpen={onOpen} onRun={onRun} />);
+      expect(screen.getByText(status)).toBeInTheDocument();
+    }
+  });
+
+  it("hides optional repo actions and opens with keyboard activation", () => {
+    const onOpen = vi.fn();
+    const onRun = vi.fn();
+    render(
+      <RepoCard
+        repo={makeRepo({
+          runnable: false,
+          runnability: null,
+          aiReadme: null,
+          aiReadmeStatus: "pending",
+          portalUrl: undefined,
+        })}
+        onOpen={onOpen}
+        onRun={onRun}
+      />,
+    );
+
+    const card = screen.getByRole("button", { name: /frontend/ });
+    expect(screen.queryByTitle("Open and run repo")).not.toBeInTheDocument();
+    expect(screen.queryByText("AI Readme")).not.toBeInTheDocument();
+    expect(screen.queryByText("Live")).not.toBeInTheDocument();
+
+    fireEvent.keyDown(card, { key: " " });
+
+    expect(onOpen).toHaveBeenCalledOnce();
+    expect(onRun).not.toHaveBeenCalled();
   });
 });
 

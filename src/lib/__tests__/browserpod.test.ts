@@ -4,6 +4,7 @@ import { BrowserPod } from "@leaningtech/browserpod";
 import {
   BLACKLISTED_DEPENDENCIES,
   createInitialPodSnapshot,
+  isSupportedFile,
   PodLifecycleManager,
   SUPPORTED_EXTENSIONS,
 } from "@/lib/browserpod";
@@ -19,11 +20,16 @@ vi.mock("@leaningtech/browserpod", () => ({
 function makePod() {
   let portalHandler: ((event: { url: string }) => void) | undefined;
   const pod = {
-    createDefaultTerminal: vi.fn().mockResolvedValue({}),
+    createDefaultTerminal: vi.fn().mockImplementation(async () => ({
+      xterm: {
+        write: vi.fn((_chunk: string | Uint8Array, callback?: () => void) => callback?.()),
+      },
+    })),
     onPortal: vi.fn((handler: (event: { url: string }) => void) => {
       portalHandler = handler;
     }),
     run: vi.fn().mockResolvedValue({}),
+    openFile: vi.fn(),
     createFile: vi.fn().mockResolvedValue({
       write: vi.fn().mockResolvedValue(0),
       close: vi.fn().mockResolvedValue(undefined),
@@ -32,6 +38,35 @@ function makePod() {
   };
 
   return { pod, emitPortal: (url: string) => portalHandler?.({ url }) };
+}
+
+function encodeUtf8(value: string) {
+  const bytes = new TextEncoder().encode(value);
+  let binary = "";
+
+  for (const byte of bytes) {
+    binary += String.fromCharCode(byte);
+  }
+
+  return btoa(binary);
+}
+
+function markerFromScript(script: string) {
+  const match = script.match(/__DEVHUB_BEGIN_(.*?)__/);
+
+  if (!match) {
+    throw new Error("Script did not include a DevHub marker");
+  }
+
+  return match[1];
+}
+
+function markedOutput(markerId: string, payload: string) {
+  return [
+    `__DEVHUB_BEGIN_${markerId}__`,
+    encodeUtf8(payload),
+    `__DEVHUB_END_${markerId}__`,
+  ].join("\n");
 }
 
 function makeManager(overrides: Partial<{ apiKey: string; onSnapshot: (snapshot: PodSnapshot) => void }> = {}) {
@@ -61,6 +96,10 @@ describe("BrowserPod constants and snapshots", () => {
   it("exports supported files and blocked native dependencies", () => {
     expect(SUPPORTED_EXTENSIONS).toEqual(expect.arrayContaining([".tsx", ".json", ".md", ".env"]));
     expect(BLACKLISTED_DEPENDENCIES).toEqual(expect.arrayContaining(["sharp", "node-gyp", "sqlite3"]));
+    expect(isSupportedFile("src/App.tsx")).toBe(true);
+    expect(isSupportedFile(".env")).toBe(true);
+    expect(isSupportedFile("nested/.gitignore")).toBe(true);
+    expect(isSupportedFile("assets/logo.png")).toBe(false);
   });
 });
 
@@ -84,11 +123,153 @@ describe("PodLifecycleManager boot", () => {
     expect(snapshots.at(-1)).toMatchObject({ portalUrl: "https://portal.example" });
   });
 
+  it("reattaches terminals without booting a second pod", async () => {
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager } = makeManager();
+    const firstHost = document.createElement("div");
+    const secondHost = document.createElement("div");
+
+    await manager.boot(firstHost);
+    await manager.boot(secondHost);
+
+    expect(BrowserPod.boot).toHaveBeenCalledOnce();
+    expect(pod.createDefaultTerminal).toHaveBeenCalledWith(firstHost);
+    expect(pod.createDefaultTerminal).toHaveBeenCalledWith(secondHost);
+  });
+
   it("rejects missing BrowserPod keys before booting", async () => {
     const { manager } = makeManager({ apiKey: "" });
 
     await expect(manager.boot(document.createElement("div"))).rejects.toThrow("Set VITE_BP_APIKEY");
     expect(BrowserPod.boot).not.toHaveBeenCalled();
+  });
+
+  it("stores readable boot failures in the snapshot", async () => {
+    vi.mocked(BrowserPod.boot).mockRejectedValue(new Error("websocket refused"));
+    const { manager, snapshots } = makeManager();
+
+    await expect(manager.boot(document.createElement("div"))).rejects.toThrow("BrowserPod could not connect");
+
+    expect(snapshots.at(-1)).toMatchObject({
+      state: "error",
+      error: expect.stringContaining("BrowserPod could not connect"),
+    });
+  });
+});
+
+describe("PodLifecycleManager file IO", () => {
+  it("reads BrowserPod text files in chunks", async () => {
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager } = makeManager();
+    const file = {
+      getSize: vi.fn().mockResolvedValue(64_005),
+      read: vi.fn().mockResolvedValueOnce("hello").mockResolvedValueOnce(" dev"),
+      write: vi.fn(),
+      close: vi.fn().mockResolvedValue(undefined),
+    };
+    pod.openFile.mockResolvedValue(file);
+
+    await manager.boot(document.createElement("div"));
+
+    await expect(manager.readTextFile("/home/user/repo/README.md")).resolves.toBe("hello dev");
+    expect(file.read).toHaveBeenNthCalledWith(1, 64_000);
+    expect(file.read).toHaveBeenNthCalledWith(2, 5);
+    expect(file.close).toHaveBeenCalledOnce();
+  });
+
+  it("rejects non-text BrowserPod files", async () => {
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager } = makeManager();
+    const binaryFile = { close: vi.fn().mockResolvedValue(undefined) };
+    pod.openFile.mockResolvedValue(binaryFile);
+
+    await manager.boot(document.createElement("div"));
+
+    await expect(manager.readTextFile("/home/user/repo/logo.png")).rejects.toThrow("not a UTF-8 text file");
+    expect(binaryFile.close).toHaveBeenCalledOnce();
+  });
+
+  it("reads runtime-created repo files through marked command output", async () => {
+    const { pod } = makePod();
+    const scripts = new Map<string, string>();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.createFile.mockImplementation(async (path: string) => ({
+      write: vi.fn(async (content: string) => {
+        scripts.set(path, content);
+        return content.length;
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    }));
+    pod.run.mockImplementation(async (command: string, args: string[], options?: { terminal?: { xterm?: { write: (chunk: string) => void } } }) => {
+      if (command === "node") {
+        const script = scripts.get(args[0]) ?? "";
+        const marker = markerFromScript(script);
+        options?.terminal?.xterm?.write(markedOutput(marker, "# Hello"));
+      }
+      return {};
+    });
+    const { manager } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+
+    await expect(manager.readRepoFile("README.md")).resolves.toBe("# Hello");
+    expect([...scripts.values()].at(0)).toContain("/home/user/repo/README.md");
+  });
+});
+
+describe("PodLifecycleManager repo preparation", () => {
+  it("clones once and reuses cached tree and runnability for the same repo", async () => {
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager } = makeManager();
+    const tree = makeFileTree();
+    const runnability = { canRun: true, entryPoint: "dev", blockers: [] };
+    vi.spyOn(manager, "refreshFileTree").mockResolvedValue(tree);
+    vi.spyOn(manager, "checkRunnability").mockResolvedValue(runnability);
+
+    await manager.boot(document.createElement("div"));
+
+    await expect(manager.cloneRepo("https://github.com/acme/frontend")).resolves.toEqual({ fileTree: tree, runnability });
+    const runCount = pod.run.mock.calls.length;
+    await expect(manager.cloneRepo("https://github.com/acme/frontend")).resolves.toEqual({ fileTree: tree, runnability });
+
+    expect(pod.run).toHaveBeenCalledWith("rm", ["-rf", "/home/user/repo"], expect.objectContaining({ echo: false }));
+    expect(pod.run).toHaveBeenCalledWith("git", ["clone", "--depth", "1", "https://github.com/acme/frontend", "/home/user/repo"], expect.any(Object));
+    expect(pod.run).toHaveBeenCalledTimes(runCount);
+  });
+
+  it("falls back to the git index when the filesystem tree is empty", async () => {
+    const { pod } = makePod();
+    const scripts = new Map<string, string>();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.createFile.mockImplementation(async (path: string) => ({
+      write: vi.fn(async (content: string) => {
+        scripts.set(path, content);
+        return content.length;
+      }),
+      close: vi.fn().mockResolvedValue(undefined),
+    }));
+    pod.run.mockImplementation(async (command: string, args: string[], options?: { terminal?: { xterm?: { write: (chunk: string) => void } } }) => {
+      if (command === "node") {
+        const script = scripts.get(args[0]) ?? "";
+        const marker = markerFromScript(script);
+        const payload = script.includes("execFileSync")
+          ? JSON.stringify(makeFileTree())
+          : JSON.stringify({ name: "repo", path: "", type: "directory", children: [] });
+        options?.terminal?.xterm?.write(markedOutput(marker, payload));
+      }
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+
+    await expect(manager.refreshFileTree()).resolves.toMatchObject({ children: expect.any(Array) });
+    expect(snapshots.some((snapshot) => snapshot.terminal.some((line) => line.text.includes("git index")))).toBe(true);
+    expect(snapshots.at(-1)?.fileTree?.children?.length).toBeGreaterThan(0);
   });
 });
 
@@ -136,6 +317,36 @@ describe("PodLifecycleManager runnability", () => {
       blockers: ["No readable package.json found at repo root"],
     });
   });
+
+  it("detects preview routes while ignoring unreadable route files", async () => {
+    const { manager } = makeManager();
+    const tree = makeFileTree();
+    tree.children?.push({
+      name: "server.ts",
+      path: "server.ts",
+      type: "file",
+      extension: ".ts",
+      supported: true,
+      size: 100,
+    });
+    manager.getSnapshot().fileTree = tree;
+    vi.spyOn(manager, "readRepoFile").mockImplementation(async (path) => {
+      if (path === "package.json") {
+        return JSON.stringify({ scripts: { start: "node server.ts" }, engines: { node: ">=22" } });
+      }
+      if (path === "server.ts") {
+        return 'app.get("/health", handler); router.route("/users/:id"); app.post("/api/items", handler);';
+      }
+      throw new Error("skip");
+    });
+
+    await expect(manager.checkRunnability()).resolves.toMatchObject({
+      canRun: true,
+      entryPoint: "start",
+      previewPath: "/health",
+      previewPaths: ["/health", "/api/items"],
+    });
+  });
 });
 
 describe("PodLifecycleManager AI payload collection", () => {
@@ -162,5 +373,47 @@ describe("PodLifecycleManager AI payload collection", () => {
       expect.objectContaining({ path: "large.ts" }),
       expect.objectContaining({ path: "image.png" }),
     ]));
+  });
+});
+
+describe("PodLifecycleManager project lifecycle", () => {
+  it("runs npm projects, stops them, and resets to ready", async () => {
+    const kill = vi.fn().mockResolvedValue(undefined);
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "npm" && args[0] === "run") {
+        return { kill };
+      }
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("dev");
+    await Promise.resolve();
+    await Promise.resolve();
+
+    expect(pod.run).toHaveBeenCalledWith("npm", ["install"], expect.objectContaining({ cwd: "/home/user/repo" }));
+    expect(pod.run).toHaveBeenCalledWith("npm", ["run", "dev"], expect.objectContaining({ cwd: "/home/user/repo" }));
+
+    await manager.stopProject();
+
+    expect(kill).toHaveBeenCalledOnce();
+    expect(pod.run).toHaveBeenCalledWith("pkill", ["-f", "npm run"], expect.objectContaining({ cwd: "/home/user/repo" }));
+    expect(snapshots.map((snapshot) => snapshot.state)).toEqual(expect.arrayContaining(["installing", "running", "stopping", "ready"]));
+  });
+
+  it("terminates BrowserPod and clears runtime state", async () => {
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.terminate();
+
+    expect(pod.terminate).toHaveBeenCalledOnce();
+    expect(manager.getSnapshot()).toMatchObject({ state: "idle", portalUrl: undefined });
+    expect(snapshots.at(-1)?.state).toBe("idle");
   });
 });
