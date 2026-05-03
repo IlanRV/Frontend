@@ -79,8 +79,18 @@ export interface RunnabilityResult {
   canRun: boolean;
   entryPoint?: "dev" | "start" | "serve" | string | null;
   blockers: string[];
+  blockerDetails?: RunnabilityBlockerDetail[];
   previewPath?: string;
   previewPaths?: string[];
+}
+
+export interface RunnabilityBlockerDetail {
+  code: string;
+  severity: SecuritySeverity | "unknown";
+  title: string;
+  description: string;
+  recommendation: string;
+  evidence?: string | null;
 }
 
 export type AnalysisProgressPhase = "queued" | "scanning" | "querying" | "saving" | "readme" | "complete" | "error";
@@ -114,7 +124,25 @@ export interface PodSnapshot {
   runnability?: RunnabilityResult;
   portalUrl?: string;
   error?: string;
+  securityEvents?: SandboxSecurityEvent[];
   terminal: TerminalLine[];
+}
+
+export type SandboxSecurityEventCode =
+  | "install-timeout"
+  | "startup-timeout"
+  | "suspicious-log"
+  | "process-error"
+  | "unsafe-install-retry";
+
+export interface SandboxSecurityEvent {
+  id: string;
+  code: SandboxSecurityEventCode;
+  severity: SecuritySeverity | "unknown";
+  title: string;
+  description: string;
+  evidence?: string;
+  createdAt: string;
 }
 
 export interface AiReadme {
