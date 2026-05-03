@@ -18,6 +18,7 @@ import type { RunnabilityResult, RuntimeCommandSuggestion, SandboxCommandRun, Te
 interface RuntimeProfileCardProps {
   runnability?: RunnabilityResult | null;
   isBusy?: boolean;
+  isStopping?: boolean;
   isRunning?: boolean;
   hasInspector?: boolean;
   activeCommand?: string;
@@ -165,6 +166,7 @@ function commandSourceLabel(command: RuntimeCommandSuggestion) {
 export function RuntimeProfileCard({
   runnability,
   isBusy,
+  isStopping,
   isRunning,
   hasInspector,
   activeCommand,
@@ -286,7 +288,7 @@ export function RuntimeProfileCard({
                 Run selected in BrowserPod
               </Button>
               {hasActiveRun && onStopRun && (
-                <Button type="button" variant="outline" size="sm" disabled={isBusy} onClick={onStopRun}>
+                <Button type="button" variant="outline" size="sm" disabled={isStopping} onClick={onStopRun}>
                   <Square className="h-4 w-4" />
                   Stop current run
                 </Button>

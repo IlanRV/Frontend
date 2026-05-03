@@ -228,6 +228,24 @@ describe("RunInspectionDialog", () => {
     expect(screen.queryByRole("button", { name: "Show QR code" })).not.toBeInTheDocument();
   });
 
+  it("shows a stop control before a preview portal appears", async () => {
+    const onStop = vi.fn();
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        command="npm run dev"
+        previewExpected
+        onStop={onStop}
+        terminalLines={[]}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop" }));
+
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+
   it("keeps the inspector header clear of badge clutter and uses a blurred backdrop", () => {
     render(
       <RunInspectionDialog

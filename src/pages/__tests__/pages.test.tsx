@@ -83,8 +83,8 @@ vi.mock("qrcode", () => ({
 }));
 
 vi.mock("@/components/repo/RunButton", () => ({
-  RunButton: ({ canRun, isRunning, isBusy, label, onRun, onStop }: { canRun: boolean; isRunning: boolean; isBusy?: boolean; label?: string; onRun: () => void; onStop: () => void }) => (
-    <button type="button" disabled={!canRun || isBusy} onClick={isRunning ? onStop : onRun}>{isRunning ? "Stop" : label ?? "Run"}</button>
+  RunButton: ({ canRun, isRunning, isBusy, isStopping, label, onRun, onStop }: { canRun: boolean; isRunning: boolean; isBusy?: boolean; isStopping?: boolean; label?: string; onRun: () => void; onStop: () => void }) => (
+    <button type="button" disabled={isRunning ? isStopping : !canRun || isBusy} onClick={isRunning ? onStop : onRun}>{isRunning ? "Stop" : label ?? "Run"}</button>
   ),
 }));
 
@@ -864,6 +864,30 @@ describe("RepoPage", () => {
     expect(registerStop).toHaveBeenCalledOnce();
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBeNull();
     expect(toast.success).toHaveBeenCalledWith("Project stopped");
+  });
+
+  it("lets users stop a run while BrowserPod is still installing", async () => {
+    const stopProject = vi.fn().mockResolvedValue(undefined);
+    const registerStop = vi.fn().mockResolvedValue(makeRepo({ status: "ready" }));
+    const pod = podHook();
+    mockedUsePod.mockReturnValue({
+      ...pod,
+      snapshot: {
+        ...pod.snapshot,
+        state: "installing",
+        terminal: [{ id: "line-1", stream: "system", text: "installing deps", createdAt: "now" }],
+        portalUrl: undefined,
+      },
+      stopProject,
+    });
+    mockedUseRepo.mockReturnValue(repoHook({ registerStop }));
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Stop" })[0]);
+
+    await waitFor(() => expect(stopProject).toHaveBeenCalledOnce());
+    expect(registerStop).toHaveBeenCalledOnce();
   });
 
   it("registers BrowserPod portal URLs once they appear", async () => {

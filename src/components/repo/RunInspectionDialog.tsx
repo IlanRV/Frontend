@@ -200,6 +200,14 @@ export function RunInspectionDialog({
                 <div>
                   <p className="font-medium text-foreground">No live preview yet</p>
                   <p className="mt-2 max-w-sm">This run may be console-only, or BrowserPod may still be waiting for the app to expose a portal.</p>
+                  {onStop && (
+                    <div className="mt-4 flex justify-center">
+                      <Button type="button" variant="outline" size="sm" onClick={onStop} disabled={isStopping}>
+                        <Square className="h-4 w-4" />
+                        Stop
+                      </Button>
+                    </div>
+                  )}
                 </div>
               </div>
             )}

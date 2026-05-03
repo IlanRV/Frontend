@@ -705,6 +705,8 @@ export class PodLifecycleManager {
   private captureQueue: Promise<void> = Promise.resolve();
   private runningProcess?: Process;
   private runLock?: Promise<void>;
+  private activeRunId = 0;
+  private stopRequested = false;
   private clonedRepoUrl?: string;
   private portalWaiters: Array<(url: string) => void> = [];
   private runtimeMonitorRestore?: () => void;
@@ -756,6 +758,10 @@ export class PodLifecycleManager {
     this.emit({
       securityEvents: [...(this.snapshot.securityEvents ?? []), event],
     });
+  }
+
+  private isRunCancelled(runId: number) {
+    return this.stopRequested || this.activeRunId !== runId;
   }
 
   private startRuntimeSecurityMonitor() {
@@ -1417,8 +1423,12 @@ export class PodLifecycleManager {
 
     const runPromise = (async () => {
       try {
+        const runId = this.activeRunId + 1;
         const invocation = projectRunInvocation(entryPoint);
         const previewExpected = options.previewExpected ?? true;
+
+        this.activeRunId = runId;
+        this.stopRequested = false;
 
         this.emit({ state: "installing", error: undefined });
         this.log("Installing npm dependencies without lifecycle scripts");
@@ -1439,12 +1449,23 @@ export class PodLifecycleManager {
           ),
         );
 
+        if (this.isRunCancelled(runId)) {
+          this.log(`Cancelled BrowserPod command before startup: ${invocation.display}`);
+          this.emit({ state: "ready", portalUrl: undefined });
+          return;
+        }
+
         this.emit({ state: "running", portalUrl: undefined });
         this.log(`Starting sandbox command: ${invocation.display}`);
         this.startRuntimeSecurityMonitor();
 
         const process = await this.runCommand(invocation.command, invocation.args, { cwd: REPO_ROOT });
         this.runningProcess = process;
+
+        if (this.isRunCancelled(runId)) {
+          await this.stopProject();
+          return;
+        }
 
         if (previewExpected && !isKillableProcess(process)) {
           const didOpenPortal = await this.waitForPortalStartup(invocation.display);
@@ -1491,6 +1512,8 @@ export class PodLifecycleManager {
   }
 
   async stopProject() {
+    this.stopRequested = true;
+    this.activeRunId += 1;
     this.emit({ state: "stopping" });
     this.log("Stopping project");
     this.stopRuntimeSecurityMonitor();

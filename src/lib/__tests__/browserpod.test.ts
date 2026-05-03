@@ -531,6 +531,38 @@ describe("PodLifecycleManager project lifecycle", () => {
     vi.useRealTimers();
   });
 
+  it("does not continue into npm run after a stop request during install", async () => {
+    let resolveInstall: (() => void) | undefined;
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "npm" && args[0] === "install") {
+        await new Promise<void>((resolve) => {
+          resolveInstall = resolve;
+        });
+        return {};
+      }
+
+      if (command === "npm" && args[0] === "run") {
+        return { kill: vi.fn().mockResolvedValue(undefined) };
+      }
+
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    const runPromise = manager.runProject("dev");
+    await Promise.resolve();
+
+    await manager.stopProject();
+    resolveInstall?.();
+    await runPromise;
+
+    expect(pod.run).not.toHaveBeenCalledWith("npm", ["run", "dev"], expect.anything());
+    expect(snapshots.at(-1)?.state).toBe("ready");
+  });
+
   it("records a clear startup timeout event when no portal opens", async () => {
     vi.useFakeTimers();
     const { pod } = makePod();

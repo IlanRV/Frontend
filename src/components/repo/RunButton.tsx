@@ -6,15 +6,16 @@ interface RunButtonProps {
   canRun: boolean;
   isRunning: boolean;
   isBusy?: boolean;
+  isStopping?: boolean;
   label?: string;
   onRun: () => void;
   onStop: () => void;
 }
 
-export function RunButton({ canRun, isRunning, isBusy, label, onRun, onStop }: RunButtonProps) {
+export function RunButton({ canRun, isRunning, isBusy, isStopping, label, onRun, onStop }: RunButtonProps) {
   if (isRunning) {
     return (
-      <Button variant="outline" size="sm" onClick={onStop} disabled={isBusy} title="Stop project">
+      <Button variant="outline" size="sm" onClick={onStop} disabled={isStopping} title="Stop project">
         <Square className="h-4 w-4" />
         Stop
       </Button>

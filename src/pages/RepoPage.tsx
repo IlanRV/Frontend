@@ -162,7 +162,8 @@ export function RepoPage() {
   const [activeTab, setActiveTab] = useState("code");
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
-  const [isRunActionPending, setIsRunActionPending] = useState(false);
+  const [isRunStarting, setIsRunStarting] = useState(false);
+  const [isRunStopping, setIsRunStopping] = useState(false);
   const [isRunInspectorOpen, setIsRunInspectorOpen] = useState(false);
   const [isSecurityConfirmOpen, setIsSecurityConfirmOpen] = useState(false);
   const [lastRunCommand, setLastRunCommand] = useState<string | undefined>();
@@ -193,7 +194,8 @@ export function RepoPage() {
     setFileError(undefined);
     setBootstrapError(undefined);
     setActiveTab("code");
-    setIsRunActionPending(false);
+    setIsRunStarting(false);
+    setIsRunStopping(false);
     setIsRunInspectorOpen(false);
     setLastRunCommand(undefined);
     setLastRunPreviewExpected(undefined);
@@ -255,7 +257,7 @@ export function RepoPage() {
   );
 
   const handleRun = useCallback(async (confirmed = false, manualOverride = false, commandOverride?: string, previewExpectedOverride?: boolean) => {
-    if (isRunActionPending) {
+    if (isRunStarting || isRunStopping) {
       return false;
     }
 
@@ -266,7 +268,7 @@ export function RepoPage() {
     }
 
     setIsSecurityConfirmOpen(false);
-    setIsRunActionPending(true);
+    setIsRunStarting(true);
     const pendingConfirmation = pendingConfirmationRef.current;
     const requestedCommandOverride = commandOverride ?? (confirmed ? pendingConfirmation.command : undefined);
     const requestedManualOverride = manualOverride || (confirmed && pendingConfirmation.manualOverride === true);
@@ -313,16 +315,16 @@ export function RepoPage() {
       toast.error(runError instanceof Error ? runError.message : "Unable to run project");
         return false;
     } finally {
-      setIsRunActionPending(false);
+      setIsRunStarting(false);
     }
-  }, [bootstrapRepo, effectiveRunnability, effectiveSecurity, extraction?.runnability, isRunActionPending, registerRun, repo?.githubUrl, repo?.id, repo?.runScript, runProject, snapshot.fileTree, snapshot.portalUrl]);
+  }, [bootstrapRepo, effectiveRunnability, effectiveSecurity, extraction?.runnability, isRunStarting, isRunStopping, registerRun, repo?.githubUrl, repo?.id, repo?.runScript, runProject, snapshot.fileTree, snapshot.portalUrl]);
 
   const handleStop = useCallback(async () => {
-    if (isRunActionPending) {
+    if (isRunStopping) {
       return;
     }
 
-    setIsRunActionPending(true);
+    setIsRunStopping(true);
 
     try {
       await stopProject();
@@ -334,9 +336,10 @@ export function RepoPage() {
     } catch (stopError) {
       toast.error(stopError instanceof Error ? stopError.message : "Unable to stop project");
     } finally {
-      setIsRunActionPending(false);
+      setIsRunStarting(false);
+      setIsRunStopping(false);
     }
-  }, [isRunActionPending, registerStop, repo?.id, stopProject]);
+  }, [isRunStopping, registerStop, repo?.id, stopProject]);
 
   const handleAutoCommand = useCallback((command: string) => {
     void handleRun(false, false, command, true);
@@ -607,8 +610,9 @@ export function RepoPage() {
     void loadSecurity();
   }, [activeTab, loadSecurity, repoId]);
 
-  const isRunning = snapshot.state === "running";
-  const isBusy = isRunActionPending || isBusyPodState(snapshot.state);
+  const isRunning = snapshot.state === "running" || snapshot.state === "installing";
+  const canStopRun = snapshot.state === "installing" || snapshot.state === "running" || snapshot.state === "stopping";
+  const isBusy = isRunStarting || isRunStopping || isBusyPodState(snapshot.state);
   const portalUrl = snapshot.portalUrl;
   const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
   const firstSupportedPath = effectiveFileTree ? findFirstSupportedFile(effectiveFileTree) : undefined;
@@ -729,6 +733,7 @@ export function RepoPage() {
             canRun={Boolean(autoPreviewCommand)}
             isRunning={isRunning}
             isBusy={isBusy}
+            isStopping={isRunStopping || snapshot.state === "stopping"}
             label={safeRunLabel}
             onRun={() => void handleRun()}
             onStop={() => void handleStop()}
@@ -789,6 +794,7 @@ export function RepoPage() {
           activeCommand={lastRunCommand ?? autoPreviewCommand}
           commandRuns={manualCommandRuns}
           terminalLines={snapshot.terminal}
+          isStopping={isRunStopping || snapshot.state === "stopping"}
           onOpenInspector={() => setIsRunInspectorOpen(true)}
           onStopRun={() => void handleStop()}
           onRunAuto={handleAutoCommand}
@@ -939,8 +945,8 @@ export function RepoPage() {
         previewExpected={lastRunPreviewExpected ?? Boolean(portalUrl)}
         projectKind={effectiveRunnability?.runtimeProfile?.projectKind}
         runtimeEventCount={(snapshot.securityEvents?.length ?? 0) + (security?.runtimeSecurity.eventCount ?? 0)}
-        isStopping={isBusy}
-        onStop={isRunning ? () => void handleStop() : undefined}
+        isStopping={isRunStopping || snapshot.state === "stopping"}
+        onStop={canStopRun ? () => void handleStop() : undefined}
         terminalLines={snapshot.terminal}
       />
       {isRunInspectorOpen && repoId && <FloatingRepoChat repoId={repoId} />}
