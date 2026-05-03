@@ -14,6 +14,7 @@ import { useRepo } from "@/hooks/useRepo";
 import { useWorkspace, useWorkspaces } from "@/hooks/useWorkspace";
 import { api } from "@/lib/api";
 import { makeExtraction, makeFileTree, makeRepo, makeRunnability, makeWorkspace } from "@/test/factories";
+import { makeSecurityScan } from "@/test/factories";
 
 vi.mock("@/hooks/useWorkspace", () => ({
   WORKSPACE_LIMIT: 3,
@@ -74,8 +75,8 @@ vi.mock("@/components/repo/PortalPreview", () => ({
 }));
 
 vi.mock("@/components/repo/RunButton", () => ({
-  RunButton: ({ canRun, isRunning, isBusy, onRun, onStop }: { canRun: boolean; isRunning: boolean; isBusy?: boolean; onRun: () => void; onStop: () => void }) => (
-    <button type="button" disabled={!canRun || isBusy} onClick={isRunning ? onStop : onRun}>{isRunning ? "Stop" : "Run"}</button>
+  RunButton: ({ canRun, isRunning, isBusy, label, onRun, onStop }: { canRun: boolean; isRunning: boolean; isBusy?: boolean; label?: string; onRun: () => void; onStop: () => void }) => (
+    <button type="button" disabled={!canRun || isBusy} onClick={isRunning ? onStop : onRun}>{isRunning ? "Stop" : label ?? "Run"}</button>
   ),
 }));
 
@@ -101,14 +102,19 @@ function repoHook(overrides: Partial<ReturnType<typeof useRepo>> = {}) {
   return {
     repo: makeRepo(),
     extraction: makeExtraction(),
+    security: undefined,
     aiReadme: { raw: "# README" },
     isLoading: false,
     isAiLoading: false,
+    isSecurityLoading: false,
     error: undefined,
     aiError: undefined,
+    securityError: undefined,
     refresh: vi.fn(),
     loadExtraction: vi.fn(),
     loadAiReadme: vi.fn(),
+    loadSecurity: vi.fn(),
+    reportSecurityEvent: vi.fn().mockResolvedValue(undefined),
     registerRun: vi.fn().mockResolvedValue(makeRepo({ status: "running" })),
     registerStop: vi.fn().mockResolvedValue(makeRepo({ status: "ready" })),
     ...overrides,
@@ -356,6 +362,204 @@ describe("RepoPage", () => {
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
   });
 
+  it("disables run and shows blocker details when backend says the repo is not runnable", async () => {
+    const runnability = makeRunnability({
+      canRun: false,
+      entryPoint: null,
+      blockers: [],
+      blockerDetails: [
+        {
+          code: "native-dep",
+          severity: "high",
+          title: "Native dependency cannot run in BrowserPod",
+          description: "The project requires a native package during startup.",
+          recommendation: "Remove the native dependency or provide a browser-compatible script.",
+          evidence: "sharp",
+        },
+      ],
+    });
+    mockedUseRepo.mockReturnValue(repoHook({
+      repo: makeRepo({ runnable: false, runnability }),
+      extraction: makeExtraction({ runnability }),
+    }));
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("tab", { name: "Security" }));
+
+    expect(screen.getByText("This repository cannot be started automatically")).toBeInTheDocument();
+    expect(screen.getByText("Native dependency cannot run in BrowserPod")).toBeInTheDocument();
+    expect(screen.getByText("sharp")).toBeInTheDocument();
+  });
+
+  it("requires confirmation before running high-risk repos", async () => {
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const registerRun = vi.fn().mockResolvedValue(makeRepo({ status: "running" }));
+    const highRiskExtraction = makeExtraction({
+      security: makeSecurityScan({
+        riskLevel: "high",
+        summary: "Suspicious install script detected.",
+        findings: [
+          {
+            title: "Credential theft attempt",
+            severity: "high",
+            category: "secret",
+            file: "postinstall.js",
+            line: 4,
+            evidence: ".npmrc and .ssh reads",
+            impact: "Could steal credentials outside a sandbox.",
+            recommendation: "Only run inside BrowserPod if needed.",
+            confidence: "high",
+          },
+        ],
+      }),
+    });
+    mockedUseRepo.mockReturnValue(repoHook({ extraction: highRiskExtraction, registerRun }));
+    mockedUsePod.mockReturnValue({
+      ...podHook(),
+      runProject,
+    });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Run in BrowserPod sandbox anyway" }));
+
+    expect(runProject).not.toHaveBeenCalled();
+    expect(screen.getByText("Confirm sandboxed run")).toBeInTheDocument();
+    expect(screen.getByText(/malicious install scripts/)).toBeInTheDocument();
+    expect(screen.getByText(/isolates the run from your real filesystem and credentials/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "I understand, run in BrowserPod sandbox" }));
+
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("dev"));
+    await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example", { sandboxConfirmed: true, manualOverride: false }));
+  });
+
+  it("sends manualOverride when a user runs a repo script despite blockers", async () => {
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const registerRun = vi.fn().mockResolvedValue(makeRepo({ status: "running" }));
+    const runnability = makeRunnability({ canRun: false, entryPoint: null, blockers: ["No dev script detected"] });
+    mockedUseRepo.mockReturnValue(repoHook({
+      repo: makeRepo({ runnability, runScript: "start" }),
+      extraction: makeExtraction({ runnability }),
+      registerRun,
+    }));
+    mockedUsePod.mockReturnValue({ ...podHook(), runProject });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: "Run with manual override" }));
+
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("start"));
+    await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example", { sandboxConfirmed: false, manualOverride: true }));
+  });
+
+  it("shows BrowserPod timeout safety events in the security tab", async () => {
+    const snapshot = {
+      ...podHook().snapshot,
+      securityEvents: [
+        {
+          id: "evt-timeout",
+          code: "startup-timeout" as const,
+          source: "browserpod" as const,
+          phase: "start" as const,
+          category: "resource" as const,
+          severity: "medium" as const,
+          title: "Sandbox startup timed out",
+          description: "The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.",
+          evidence: "No BrowserPod portal opened within 30 seconds.",
+          createdAt: "2026-05-03T00:00:00.000Z",
+        },
+      ],
+    };
+    mockedUsePod.mockReturnValue({ ...podHook(), snapshot });
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Security" }));
+
+    expect(screen.getByText("The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.")).toBeInTheDocument();
+  });
+
+  it("reports BrowserPod timeout events to the backend security-events endpoint", async () => {
+    const reportSecurityEvent = vi.fn().mockResolvedValue(undefined);
+    const snapshot = {
+      ...podHook().snapshot,
+      securityEvents: [
+        {
+          id: "evt-install-timeout",
+          code: "install-timeout" as const,
+          source: "browserpod" as const,
+          phase: "install" as const,
+          category: "resource" as const,
+          severity: "high" as const,
+          title: "Install timed out",
+          description: "The install command did not finish before the safety timeout.",
+          evidence: "npm install --ignore-scripts exceeded 60000ms.",
+          command: "npm install --ignore-scripts",
+          createdAt: "2026-05-03T00:00:00.000Z",
+        },
+        {
+          id: "evt-start-timeout",
+          code: "startup-timeout" as const,
+          source: "browserpod" as const,
+          phase: "start" as const,
+          category: "resource" as const,
+          severity: "high" as const,
+          title: "Dev server did not become ready",
+          description: "The project started a process but did not expose a BrowserPod portal before the timeout.",
+          evidence: "No BrowserPod portal opened within 30 seconds.",
+          command: "npm run dev",
+          createdAt: "2026-05-03T00:00:00.000Z",
+        },
+      ],
+    };
+    mockedUsePod.mockReturnValue({ ...podHook(), snapshot });
+    mockedUseRepo.mockReturnValue(repoHook({ reportSecurityEvent }));
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await waitFor(() => expect(reportSecurityEvent).toHaveBeenCalledTimes(2));
+    expect(reportSecurityEvent).toHaveBeenCalledWith(expect.objectContaining({ title: "Install timed out", command: "npm install --ignore-scripts" }));
+    expect(reportSecurityEvent).toHaveBeenCalledWith(expect.objectContaining({ title: "Dev server did not become ready", phase: "start" }));
+  });
+
+  it("renders backend runtime security timeline events", async () => {
+    mockedUseRepo.mockReturnValue(repoHook({
+      security: {
+        success: true,
+        repoId: "repo-1",
+        staticSecurity: null,
+        runnability: makeRunnability(),
+        runtimeSecurity: {
+          riskLevel: "high",
+          eventCount: 1,
+          latestEventAt: "2026-05-03T00:00:00.000Z",
+          events: [
+            {
+              id: "evt-1",
+              source: "browserpod",
+              phase: "runtime",
+              category: "filesystem",
+              severity: "high",
+              title: "Suspicious credential path access",
+              description: "The sandbox logs referenced sensitive credential paths. BrowserPod isolates these paths from the real machine.",
+              evidence: "cat ~/.ssh/id_rsa",
+              createdAt: "2026-05-03T00:00:00.000Z",
+            },
+          ],
+        },
+      },
+    }));
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("tab", { name: "Security" }));
+
+    expect(screen.getByText("Runtime sandbox events")).toBeInTheDocument();
+    expect(screen.getByText("Suspicious credential path access")).toBeInTheDocument();
+    expect(screen.getByText("cat ~/.ssh/id_rsa")).toBeInTheDocument();
+  });
+
   it("stops running projects and clears run intent", async () => {
     window.localStorage.setItem("devhub:repo-run-intent:repo-1", "true");
     const stopProject = vi.fn().mockResolvedValue(undefined);
@@ -383,7 +587,7 @@ describe("RepoPage", () => {
 
     renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
 
-    await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example"));
+    await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example", {}));
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
   });
 

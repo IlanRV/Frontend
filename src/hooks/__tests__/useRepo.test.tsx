@@ -12,6 +12,8 @@ vi.mock("@/lib/api", () => ({
       get: vi.fn(),
       run: vi.fn(),
       stop: vi.fn(),
+      getSecurity: vi.fn(),
+      reportSecurityEvent: vi.fn(),
     },
     ai: {
       getExtraction: vi.fn(),
@@ -99,14 +101,69 @@ describe("useRepo", () => {
 
     await waitFor(() => expect(result.current.repo).toBeDefined());
     await act(async () => {
-      await result.current.registerRun("https://portal.example");
+      await result.current.registerRun("https://portal.example", { sandboxConfirmed: true });
     });
     expect(result.current.repo?.status).toBe("running");
+    expect(reposApi.run).toHaveBeenCalledWith("repo-1", "https://portal.example", { sandboxConfirmed: true });
 
     await act(async () => {
       await result.current.registerStop();
     });
     expect(result.current.repo?.status).toBe("ready");
+  });
+
+  it("loads and reports runtime security events", async () => {
+    reposApi.get.mockResolvedValueOnce(makeRepo());
+    reposApi.getSecurity.mockResolvedValue({
+      success: true,
+      repoId: "repo-1",
+      staticSecurity: null,
+      runtimeSecurity: {
+        riskLevel: "high",
+        eventCount: 1,
+        latestEventAt: "2026-05-03T00:00:00.000Z",
+        events: [{
+          id: "evt-1",
+          source: "browserpod",
+          phase: "install",
+          category: "resource",
+          severity: "high",
+          title: "Install timed out",
+          description: "The install command did not finish before the safety timeout.",
+          createdAt: "2026-05-03T00:00:00.000Z",
+        }],
+      },
+      runnability: null,
+    });
+    reposApi.reportSecurityEvent.mockResolvedValue({
+      success: true,
+      event: {
+        source: "browserpod",
+        phase: "install",
+        category: "resource",
+        severity: "high",
+        title: "Install timed out",
+        description: "The install command did not finish before the safety timeout.",
+        createdAt: "2026-05-03T00:00:00.000Z",
+      },
+      runtimeSecurity: { riskLevel: "high", eventCount: 1, latestEventAt: "2026-05-03T00:00:00.000Z", events: [] },
+    });
+    const { result } = renderHook(() => useRepo("repo-1"));
+
+    await waitFor(() => expect(result.current.repo).toBeDefined());
+    await act(async () => {
+      await result.current.reportSecurityEvent({
+        source: "browserpod",
+        phase: "install",
+        category: "resource",
+        severity: "high",
+        title: "Install timed out",
+        description: "The install command did not finish before the safety timeout.",
+      });
+    });
+
+    expect(reposApi.reportSecurityEvent).toHaveBeenCalledOnce();
+    expect(result.current.security?.runtimeSecurity.events[0].title).toBe("Install timed out");
   });
 
   it("handles missing repo ids", async () => {
@@ -118,6 +175,14 @@ describe("useRepo", () => {
 
     expect(result.current.error).toBe("Missing repo id");
     await expect(result.current.registerRun("portal")).rejects.toThrow("Missing repo id");
+    await expect(result.current.reportSecurityEvent({
+      source: "browserpod",
+      phase: "runtime",
+      category: "other",
+      severity: "info",
+      title: "event",
+      description: "event",
+    })).rejects.toThrow("Missing repo id");
     await expect(result.current.registerStop()).rejects.toThrow("Missing repo id");
   });
 });

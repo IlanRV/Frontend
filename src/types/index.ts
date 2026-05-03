@@ -79,8 +79,20 @@ export interface RunnabilityResult {
   canRun: boolean;
   entryPoint?: "dev" | "start" | "serve" | string | null;
   blockers: string[];
+  blockerDetails?: RunnabilityBlockerDetail[];
   previewPath?: string;
   previewPaths?: string[];
+}
+
+export type RunnabilityBlockerSeverity = SecuritySeverity | "warning" | "error" | "unknown";
+
+export interface RunnabilityBlockerDetail {
+  code: string;
+  severity: RunnabilityBlockerSeverity;
+  title: string;
+  description: string;
+  recommendation: string;
+  evidence?: string | null;
 }
 
 export type AnalysisProgressPhase = "queued" | "scanning" | "querying" | "saving" | "readme" | "complete" | "error";
@@ -114,7 +126,68 @@ export interface PodSnapshot {
   runnability?: RunnabilityResult;
   portalUrl?: string;
   error?: string;
+  securityEvents?: SandboxSecurityEvent[];
   terminal: TerminalLine[];
+}
+
+export type SandboxSecurityEventCode =
+  | "install-timeout"
+  | "startup-timeout"
+  | "suspicious-log"
+  | "process-error"
+  | "unsafe-install-retry";
+
+export type RuntimeSecurityEventPhase = "clone" | "install" | "start" | "preview" | "stop" | "runtime";
+export type RuntimeSecurityEventCategory = "filesystem" | "network" | "process" | "resource" | "install" | "sandbox" | "runtime" | "other";
+
+export interface RuntimeSecurityEventPayload {
+  source: "browserpod";
+  phase: RuntimeSecurityEventPhase;
+  category: RuntimeSecurityEventCategory;
+  severity: SecuritySeverity;
+  title: string;
+  description: string;
+  evidence?: string;
+  command?: string;
+}
+
+export interface RuntimeSecurityEvent extends RuntimeSecurityEventPayload {
+  id?: string;
+  eventId?: string;
+  repoId?: string;
+  createdAt: string;
+}
+
+export interface RuntimeSecuritySummary {
+  riskLevel: SecuritySeverity | "unknown";
+  eventCount: number;
+  latestEventAt: string | null;
+  events: RuntimeSecurityEvent[];
+}
+
+export interface RepoSecurityResponse {
+  success: boolean;
+  repoId: string;
+  staticSecurity: SecurityScan | null;
+  runtimeSecurity: RuntimeSecuritySummary;
+  runnability: RunnabilityResult | null;
+}
+
+export interface RegisterSecurityEventResponse {
+  success: boolean;
+  event: RuntimeSecurityEvent;
+  runtimeSecurity: RuntimeSecuritySummary;
+}
+
+export interface RegisterRunOptions {
+  sandboxConfirmed?: boolean;
+  manualOverride?: boolean;
+}
+
+export interface SandboxSecurityEvent extends RuntimeSecurityEventPayload {
+  id: string;
+  code: SandboxSecurityEventCode;
+  createdAt: string;
 }
 
 export interface AiReadme {

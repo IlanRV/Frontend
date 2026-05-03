@@ -7,11 +7,13 @@ import {
 } from "@leaningtech/browserpod";
 import { satisfies as semverSatisfies, validRange } from "semver";
 
+import { suspiciousLogEvent } from "@/lib/security";
 import type {
   ExtractAiPayload,
   FileTreeNode,
   PodSnapshot,
   RunnabilityResult,
+  SandboxSecurityEvent,
   SupportedExtension,
   TerminalLine,
 } from "@/types";
@@ -73,6 +75,8 @@ const MAX_ROUTE_SCAN_FILES = 40;
 const MAX_ROUTE_SCAN_FILE_BYTES = 200_000;
 const REPO_ROOT = "/home/user/repo";
 const FILE_TREE_RETRY_DELAYS_MS = [0, 350, 800, 1400];
+const INSTALL_TIMEOUT_MS = 60_000;
+const PORTAL_STARTUP_TIMEOUT_MS = 30_000;
 
 interface PodLifecycleManagerOptions {
   repoId: string;
@@ -172,6 +176,36 @@ function createTerminalLine(text: string, stream: TerminalLine["stream"]): Termi
     stream,
     createdAt: nowIso(),
   };
+}
+
+function createSecurityEvent(
+  code: SandboxSecurityEvent["code"],
+  phase: SandboxSecurityEvent["phase"],
+  category: SandboxSecurityEvent["category"],
+  severity: SandboxSecurityEvent["severity"],
+  title: string,
+  description: string,
+  evidence?: string,
+  command?: string,
+): SandboxSecurityEvent {
+  return {
+    id: crypto.randomUUID(),
+    code,
+    source: "browserpod",
+    phase,
+    category,
+    severity,
+    title,
+    description,
+    evidence,
+    command,
+    createdAt: nowIso(),
+  };
+}
+
+function isKillableProcess(process: Process): process is KillableProcess {
+  const candidate = process as KillableProcess;
+  return Boolean(candidate.kill ?? candidate.terminate ?? candidate.close);
 }
 
 function isTextFile(file: BinaryFile | TextFile): file is TextFile {
@@ -633,6 +667,9 @@ export class PodLifecycleManager {
   private runningProcess?: Process;
   private runLock?: Promise<void>;
   private clonedRepoUrl?: string;
+  private portalWaiters: Array<(url: string) => void> = [];
+  private runtimeMonitorRestore?: () => void;
+  private runtimeSecurityEvidence = new Set<string>();
   private snapshot: PodSnapshot;
   private readonly apiKey: string;
   private readonly storageKey: string;
@@ -661,6 +698,132 @@ export class PodLifecycleManager {
   private log(text: string, stream: TerminalLine["stream"] = "system") {
     this.emit({
       terminal: [...this.snapshot.terminal, createTerminalLine(text, stream)].slice(-200),
+    });
+  }
+
+  private recordSecurityEvent(event: SandboxSecurityEvent) {
+    this.emit({
+      securityEvents: [...(this.snapshot.securityEvents ?? []), event],
+    });
+  }
+
+  private startRuntimeSecurityMonitor() {
+    const terminal = this.terminal as InternalTerminal | undefined;
+
+    if (!terminal?.xterm || this.runtimeMonitorRestore) {
+      return;
+    }
+
+    const originalWrite = terminal.xterm.write.bind(terminal.xterm);
+
+    terminal.xterm.write = (chunk, callback) => {
+      const text = terminalChunkToText(chunk);
+
+      for (const line of text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+        const event = suspiciousLogEvent(line);
+
+        if (!event) {
+          continue;
+        }
+
+        const key = `${event.code}:${event.title}:${event.evidence ?? ""}`;
+        if (this.runtimeSecurityEvidence.has(key)) {
+          continue;
+        }
+
+        this.runtimeSecurityEvidence.add(key);
+        this.recordSecurityEvent(event);
+      }
+
+      originalWrite(chunk, callback);
+    };
+
+    this.runtimeMonitorRestore = () => {
+      terminal.xterm!.write = originalWrite;
+      this.runtimeMonitorRestore = undefined;
+    };
+  }
+
+  private stopRuntimeSecurityMonitor() {
+    this.runtimeMonitorRestore?.();
+  }
+
+  private async runCommandWithTimeout(
+    command: string,
+    args: string[],
+    options: PodRunOptions,
+    timeoutMs: number,
+    timeoutEvent: () => SandboxSecurityEvent,
+  ) {
+    let timeoutId: number | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timeoutId = window.setTimeout(() => {
+        resolve("timeout");
+      }, timeoutMs);
+    });
+
+    try {
+      const result = await Promise.race([this.runCommand(command, args, options), timeout]);
+
+      if (result === "timeout") {
+        const event = timeoutEvent();
+        this.recordSecurityEvent(event);
+        void this.stopProject().catch(() => undefined);
+        throw new Error(event.description);
+      }
+
+      return result;
+    } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  private waitForPortalStartup(entryPoint: RunScriptName) {
+    if (this.snapshot.portalUrl) {
+      return Promise.resolve(true);
+    }
+
+    return new Promise<boolean>((resolve) => {
+      let done = false;
+      let removeWaiter = () => undefined;
+      const timeoutId = window.setTimeout(() => {
+        if (done) {
+          return;
+        }
+
+        done = true;
+        removeWaiter();
+        this.recordSecurityEvent(createSecurityEvent(
+          "startup-timeout",
+          "start",
+          "resource",
+          "high",
+          "Dev server did not become ready",
+          "The project started a process but did not expose a BrowserPod portal before the timeout.",
+          "No BrowserPod portal opened within 30 seconds.",
+          `npm run ${entryPoint}`,
+        ));
+        void this.stopProject().catch(() => undefined);
+        resolve(false);
+      }, PORTAL_STARTUP_TIMEOUT_MS);
+
+      const waiter = () => {
+        if (done) {
+          return;
+        }
+
+        done = true;
+        window.clearTimeout(timeoutId);
+        removeWaiter();
+        resolve(true);
+      };
+
+      removeWaiter = () => {
+        this.portalWaiters = this.portalWaiters.filter((item) => item !== waiter);
+      };
+      this.portalWaiters.push(waiter);
     });
   }
 
@@ -814,6 +977,10 @@ export class PodLifecycleManager {
       this.terminalHost = terminalHost;
       this.pod.onPortal(({ url }) => {
         this.emit({ portalUrl: url });
+        for (const waiter of this.portalWaiters) {
+          waiter(url);
+        }
+        this.portalWaiters = [];
         this.log(`Portal opened: ${url}`);
       });
       this.emit({ state: "ready" });
@@ -1145,31 +1312,70 @@ export class PodLifecycleManager {
       return Promise.resolve();
     }
 
-    this.runLock = (async () => {
-      this.emit({ state: "installing", error: undefined });
-      this.log("Installing npm dependencies");
-      await this.runCommand("npm", ["install"], { cwd: REPO_ROOT });
+    const runPromise = (async () => {
+      try {
+        this.emit({ state: "installing", error: undefined });
+        this.log("Installing npm dependencies without lifecycle scripts");
+        await this.runCommandWithTimeout(
+          "npm",
+          ["install", "--ignore-scripts"],
+          { cwd: REPO_ROOT },
+          INSTALL_TIMEOUT_MS,
+          () => createSecurityEvent(
+            "install-timeout",
+            "install",
+            "resource",
+            "high",
+            "Install timed out",
+            "The install command did not finish before the safety timeout.",
+            "npm install --ignore-scripts exceeded 60000ms.",
+            "npm install --ignore-scripts",
+          ),
+        );
 
-      this.emit({ state: "running", portalUrl: undefined });
-      this.log(`Starting npm script: ${entryPoint}`);
+        this.emit({ state: "running", portalUrl: undefined });
+        this.log(`Starting npm script: ${entryPoint}`);
+        this.startRuntimeSecurityMonitor();
 
-      const runPromise = this.runCommand("npm", ["run", entryPoint], { cwd: REPO_ROOT });
+        const process = await this.runCommand("npm", ["run", entryPoint], { cwd: REPO_ROOT });
+        this.runningProcess = process;
 
-      void runPromise
-        .then((process) => {
-          this.runningProcess = process;
-        })
-        .catch((error: unknown) => {
-          console.error("[BrowserPod] project process error:", error);
-          const message = error instanceof Error ? error.message : "Project process stopped";
-          if (this.snapshot.state === "running") {
-            this.emit({ state: "error", error: message });
+        if (!isKillableProcess(process)) {
+          const didOpenPortal = await this.waitForPortalStartup(entryPoint);
+
+          if (!didOpenPortal) {
+            throw new Error("The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.");
           }
-          this.log(message, "stderr");
-        });
-    })().finally(() => {
+        }
+      } catch (error) {
+        this.stopRuntimeSecurityMonitor();
+        const message = error instanceof Error ? error.message : "Project process stopped";
+        const isExpectedSandboxStop = message.startsWith("The sandbox was stopped") || message.includes("install command did not finish");
+
+        if (!isExpectedSandboxStop) {
+          this.recordSecurityEvent(createSecurityEvent(
+            "process-error",
+            "start",
+            "process",
+            "medium",
+            "Sandbox process error",
+            "The project process stopped before DevHub could open a stable BrowserPod preview.",
+            message,
+          ));
+          this.emit({ state: "error", error: message });
+        }
+
+        this.log(message, "stderr");
+        throw error;
+      }
+    })();
+
+    runPromise.catch(() => undefined);
+    this.runLock = runPromise.finally(() => {
       this.runLock = undefined;
     });
+
+    this.runLock.catch(() => undefined);
 
     return this.runLock;
   }
@@ -1177,12 +1383,28 @@ export class PodLifecycleManager {
   async stopProject() {
     this.emit({ state: "stopping" });
     this.log("Stopping project");
+    this.stopRuntimeSecurityMonitor();
 
     const process = this.runningProcess as KillableProcess | undefined;
     const maybeKill = process?.kill ?? process?.terminate ?? process?.close;
 
     if (maybeKill) {
-      await maybeKill.call(process);
+      try {
+        await maybeKill.call(process);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "BrowserPod process kill failed";
+        this.recordSecurityEvent(createSecurityEvent(
+          "process-error",
+          "stop",
+          "process",
+          "high",
+          "Sandbox process did not stop cleanly",
+          "The frontend attempted to stop the running process but it did not exit cleanly.",
+          message,
+          "kill BrowserPod process",
+        ));
+        this.log(message, "stderr");
+      }
     }
 
     const killPatterns = ["npm run", "nodemon", "node server", "node app", "node index"];
@@ -1228,6 +1450,9 @@ export class PodLifecycleManager {
     this.runningProcess = undefined;
     this.runLock = undefined;
     this.clonedRepoUrl = undefined;
+    this.portalWaiters = [];
+    this.stopRuntimeSecurityMonitor();
+    this.runtimeSecurityEvidence.clear();
     this.emit({ state: "idle", portalUrl: undefined });
   }
 }

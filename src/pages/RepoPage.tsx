@@ -6,6 +6,7 @@ import {
   ExternalLink,
   Menu,
   RotateCw,
+  ShieldAlert,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
@@ -23,6 +24,14 @@ import { RunButton } from "@/components/repo/RunButton";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { SectionLoading } from "@/components/ui/section-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
@@ -30,8 +39,9 @@ import { usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
 import { api } from "@/lib/api";
 import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
+import { requiresSandboxConfirmation, runButtonLabel } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { FileTreeNode } from "@/types";
+import type { FileTreeNode, RegisterRunOptions } from "@/types";
 
 function findFirstSupportedFile(node: FileTreeNode): string | undefined {
   if (node.type === "file" && node.supported) {
@@ -121,6 +131,11 @@ export function RepoPage() {
     refresh,
     loadExtraction,
     loadAiReadme,
+    security,
+    isSecurityLoading,
+    securityError,
+    loadSecurity,
+    reportSecurityEvent,
     registerRun,
     registerStop,
   } = useRepo(repoId);
@@ -146,13 +161,18 @@ export function RepoPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isRunActionPending, setIsRunActionPending] = useState(false);
+  const [isSecurityConfirmOpen, setIsSecurityConfirmOpen] = useState(false);
   const [bootAttempt, setBootAttempt] = useState(0);
   const bootedRepoRef = useRef<string | undefined>();
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
+  const pendingRunOptionsRef = useRef<RegisterRunOptions>({});
+  const reportedSecurityEventsRef = useRef<Set<string>>(new Set());
   const aiReadmeRequestRef = useRef<string | undefined>();
   const securityRescanRequestRef = useRef<string | undefined>();
   const activeRepoRef = useRef<string | undefined>();
+  const effectiveSecurity = extraction?.security ?? repo?.analysis?.security ?? null;
+  const effectiveRunnability = security?.runnability ?? extraction?.runnability ?? snapshot.runnability ?? repo?.runnability ?? undefined;
 
   useEffect(() => {
     if (activeRepoRef.current === repoId) {
@@ -221,29 +241,44 @@ export function RepoPage() {
     [readFile, repoId, snapshot.state],
   );
 
-  const handleRun = useCallback(async () => {
+  const handleRun = useCallback(async (confirmed = false, manualOverride = false) => {
     if (isRunActionPending) {
       return;
     }
 
+    if (!confirmed && requiresSandboxConfirmation(effectiveSecurity)) {
+      setIsSecurityConfirmOpen(true);
+      return;
+    }
+
+    setIsSecurityConfirmOpen(false);
     setIsRunActionPending(true);
+    pendingRunOptionsRef.current = {
+      sandboxConfirmed: confirmed && requiresSandboxConfirmation(effectiveSecurity),
+      manualOverride,
+    };
 
     try {
-      let runnability = snapshot.runnability ?? repo?.runnability ?? undefined;
+      let runnability = effectiveRunnability;
+      const entryPoint = runnability?.entryPoint ?? (manualOverride ? repo?.runScript : undefined);
 
-      if (!snapshot.fileTree && repo?.githubUrl) {
+      if ((!runnability || runnability.canRun) && !snapshot.fileTree && repo?.githubUrl) {
         const prepared = await bootstrapRepo(repo.githubUrl);
         setFileTree(prepared.fileTree);
         saveCachedFileTree(repo.id, prepared.fileTree);
-        runnability = prepared.runnability;
+        runnability = extraction?.runnability ?? prepared.runnability;
       }
 
-      if (!runnability?.canRun || !runnability.entryPoint) {
+      if ((!runnability?.canRun && !manualOverride) || !entryPoint) {
         toast.error("This repo is not runnable in BrowserPod yet");
         return;
       }
 
-      await runProject(runnability.entryPoint);
+      await runProject(entryPoint);
+      if (snapshot.portalUrl && registeredPortalRef.current !== snapshot.portalUrl) {
+        registeredPortalRef.current = snapshot.portalUrl;
+        await registerRun(snapshot.portalUrl, pendingRunOptionsRef.current);
+      }
       if (repo?.id) {
         setStoredRunIntent(repo.id, true);
       }
@@ -255,7 +290,7 @@ export function RepoPage() {
     } finally {
       setIsRunActionPending(false);
     }
-  }, [bootstrapRepo, isRunActionPending, repo?.githubUrl, repo?.id, repo?.runnability, runProject, snapshot.fileTree, snapshot.runnability]);
+  }, [bootstrapRepo, effectiveRunnability, effectiveSecurity, extraction?.runnability, isRunActionPending, registerRun, repo?.githubUrl, repo?.id, repo?.runScript, runProject, snapshot.fileTree, snapshot.portalUrl]);
 
   const handleStop = useCallback(async () => {
     if (isRunActionPending) {
@@ -382,23 +417,65 @@ export function RepoPage() {
       return;
     }
 
+    if (requiresSandboxConfirmation(effectiveSecurity) && !pendingRunOptionsRef.current.sandboxConfirmed) {
+      return;
+    }
+
+    if (effectiveRunnability && !effectiveRunnability.canRun && !pendingRunOptionsRef.current.manualOverride) {
+      return;
+    }
+
     registeredPortalRef.current = snapshot.portalUrl;
     if (repo?.id) {
       setStoredRunIntent(repo.id, true);
     }
-    void registerRun(snapshot.portalUrl).catch((registerError: unknown) => {
+    void registerRun(snapshot.portalUrl, pendingRunOptionsRef.current).catch((registerError: unknown) => {
       toast.error(registerError instanceof Error ? registerError.message : "Unable to save portal URL");
     });
-  }, [registerRun, repo?.id, snapshot.portalUrl]);
+  }, [effectiveRunnability, effectiveSecurity, registerRun, repo?.id, snapshot.portalUrl]);
+
+  useEffect(() => {
+    if (!repo?.id || snapshot.securityEvents?.length === 0) {
+      return;
+    }
+
+    for (const event of snapshot.securityEvents ?? []) {
+      const key = event.id;
+      if (reportedSecurityEventsRef.current.has(key)) {
+        continue;
+      }
+
+      reportedSecurityEventsRef.current.add(key);
+      void reportSecurityEvent({
+        source: event.source,
+        phase: event.phase,
+        category: event.category,
+        severity: event.severity,
+        title: event.title,
+        description: event.description,
+        evidence: event.evidence,
+        command: event.command,
+      }).catch(() => undefined);
+    }
+  }, [repo?.id, reportSecurityEvent, snapshot.securityEvents]);
+
+  useEffect(() => {
+    if (activeTab !== "security" || !repoId) {
+      return;
+    }
+
+    void loadSecurity();
+  }, [activeTab, loadSecurity, repoId]);
 
   const isRunning = snapshot.state === "running";
   const isBusy = isRunActionPending || isBusyPodState(snapshot.state);
   const portalUrl = snapshot.portalUrl;
-  const effectiveRunnability = snapshot.runnability ?? repo?.runnability ?? undefined;
   const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
   const firstSupportedPath = effectiveFileTree ? findFirstSupportedFile(effectiveFileTree) : undefined;
   const analysisProgress = repo?.analysisProgress ?? extraction?.analysisProgress ?? null;
   const isExtractionInFlight = repo?.status === "cloning" || repo?.status === "analyzing";
+  const safeRunLabel = effectiveRunnability?.canRun ? runButtonLabel(effectiveSecurity) : "Run";
+  const canManualOverride = !effectiveRunnability?.canRun && Boolean(repo?.runScript);
   const isTreeLoading =
     isLoading ||
     ((snapshot.state === "booting" || snapshot.state === "cloning") && !effectiveFileTree);
@@ -440,6 +517,32 @@ export function RepoPage() {
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 xl:max-w-[104rem] xl:pr-[25rem]">
+      <Dialog open={isSecurityConfirmOpen} onOpenChange={setIsSecurityConfirmOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <ShieldAlert className="h-5 w-5 text-amber-600 dark:text-amber-300" />
+              Confirm sandboxed run
+            </DialogTitle>
+            <DialogDescription className="leading-6">
+              This repository has high-risk findings. BrowserPod isolates the run from your real filesystem and credentials, but suspicious projects can still hang the preview, consume CPU, or fail to start.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="space-y-2 rounded-md border border-amber-200 bg-amber-50 p-3 text-sm leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+            <p>
+              Continue only if you want to inspect it inside BrowserPod. Watch for malicious install scripts, obfuscated code, credential theft attempts, destructive filesystem commands, or resource abuse.
+            </p>
+          </div>
+          <DialogFooter>
+            <Button type="button" variant="outline" onClick={() => setIsSecurityConfirmOpen(false)}>
+              Cancel
+            </Button>
+            <Button type="button" variant="success" onClick={() => void handleRun(true)}>
+              I understand, run in BrowserPod sandbox
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <Button variant="ghost" size="sm" asChild className="mb-3">
@@ -479,9 +582,15 @@ export function RepoPage() {
             canRun={Boolean(effectiveRunnability?.canRun)}
             isRunning={isRunning}
             isBusy={isBusy}
+            label={safeRunLabel}
             onRun={() => void handleRun()}
             onStop={() => void handleStop()}
           />
+          {canManualOverride && !isRunning && (
+            <Button variant="outline" size="sm" disabled={isBusy} onClick={() => void handleRun(true, true)}>
+              Run with manual override
+            </Button>
+          )}
           {portalUrl && (
             <Button variant="outline" size="sm" asChild>
               <a href={portalUrl} target="_blank" rel="noreferrer">
@@ -594,14 +703,18 @@ export function RepoPage() {
                   portalUrl={portalUrl}
                   previewPath={effectiveRunnability?.previewPath}
                   previewPaths={effectiveRunnability?.previewPaths}
+                  riskLevel={effectiveSecurity?.riskLevel}
                 />
               </TabsContent>
 
               <TabsContent value="security" className="min-h-[36rem] rounded-lg border border-border bg-background">
                 <SecurityOverview
                   extraction={extraction}
-                  isLoading={isAiLoading || (!extraction?.security && isExtractionInFlight)}
-                  error={aiError}
+                  runnability={effectiveRunnability}
+                  runtimeEvents={snapshot.securityEvents}
+                  runtimeSecurity={security?.runtimeSecurity}
+                  isLoading={isAiLoading || isSecurityLoading || (!extraction?.security && isExtractionInFlight)}
+                  error={aiError ?? securityError}
                   onRetry={repoId ? () => void api.ai.extractStored(repoId).then(() => {
                     void refresh();
                     void loadExtraction();

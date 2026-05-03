@@ -399,7 +399,7 @@ describe("PodLifecycleManager project lifecycle", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(pod.run).toHaveBeenCalledWith("npm", ["install"], expect.objectContaining({ cwd: "/home/user/repo" }));
+    expect(pod.run).toHaveBeenCalledWith("npm", ["install", "--ignore-scripts"], expect.objectContaining({ cwd: "/home/user/repo" }));
     expect(pod.run).toHaveBeenCalledWith("npm", ["run", "dev"], expect.objectContaining({ cwd: "/home/user/repo" }));
 
     await manager.stopProject();
@@ -407,6 +407,60 @@ describe("PodLifecycleManager project lifecycle", () => {
     expect(kill).toHaveBeenCalledOnce();
     expect(pod.run).toHaveBeenCalledWith("pkill", ["-f", "npm run"], expect.objectContaining({ cwd: "/home/user/repo" }));
     expect(snapshots.map((snapshot) => snapshot.state)).toEqual(expect.arrayContaining(["installing", "running", "stopping", "ready"]));
+  });
+
+  it("records a clear startup timeout event when no portal opens", async () => {
+    vi.useFakeTimers();
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    const run = manager.runProject("dev");
+    await Promise.resolve();
+    const startupTimeout = expect(run).rejects.toThrow("The sandbox was stopped because the project did not finish starting");
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await startupTimeout;
+    expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "startup-timeout",
+        source: "browserpod",
+        phase: "start",
+        category: "resource",
+        severity: "high",
+        title: "Dev server did not become ready",
+        command: "npm run dev",
+      }),
+    ]));
+  });
+
+  it("records process kill failures as sandbox security events", async () => {
+    const kill = vi.fn().mockRejectedValue(new Error("kill refused"));
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "npm" && args[0] === "run") {
+        return { kill };
+      }
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("dev");
+    await manager.stopProject();
+
+    expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "browserpod",
+        phase: "stop",
+        category: "process",
+        severity: "high",
+        title: "Sandbox process did not stop cleanly",
+        evidence: "kill refused",
+      }),
+    ]));
   });
 
   it("terminates BrowserPod and clears runtime state", async () => {
