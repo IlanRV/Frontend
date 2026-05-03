@@ -94,11 +94,15 @@ describe("BrowserPod constants and snapshots", () => {
   });
 
   it("exports supported files and blocked native dependencies", () => {
-    expect(SUPPORTED_EXTENSIONS).toEqual(expect.arrayContaining([".tsx", ".json", ".md", ".env"]));
+    expect(SUPPORTED_EXTENSIONS).toEqual(expect.arrayContaining([".tsx", ".json", ".md", ".env", ".ejs", ".hbs", ".handlebars", ".dust"]));
     expect(BLACKLISTED_DEPENDENCIES).toEqual(expect.arrayContaining(["sharp", "node-gyp", "sqlite3"]));
     expect(isSupportedFile("src/App.tsx")).toBe(true);
     expect(isSupportedFile(".env")).toBe(true);
     expect(isSupportedFile("nested/.gitignore")).toBe(true);
+    expect(isSupportedFile("views/admin.ejs")).toBe(true);
+    expect(isSupportedFile("views/account.hbs")).toBe(true);
+    expect(isSupportedFile("views/layout.handlebars")).toBe(true);
+    expect(isSupportedFile("views/about.dust")).toBe(true);
     expect(isSupportedFile("assets/logo.png")).toBe(false);
   });
 });
