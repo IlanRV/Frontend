@@ -3,6 +3,7 @@ import type {
   ExtractionResponse,
   FileTreeNode,
   Repo,
+  RepoRuntimeProfile,
   RunnabilityResult,
   SecurityScan,
   Workspace,
@@ -64,6 +65,19 @@ export function makeRunnability(overrides: Partial<RunnabilityResult> = {}): Run
     blockers: [],
     previewPath: "/api/health",
     previewPaths: ["/api/health", "/docs"],
+    ...overrides,
+  };
+}
+
+export function makeRuntimeProfile(overrides: Partial<RepoRuntimeProfile> = {}): RepoRuntimeProfile {
+  return {
+    projectKind: "preview-app",
+    supportLevel: "auto-preview",
+    previewExpected: true,
+    autoCommand: "npm run dev",
+    manualCommands: [],
+    evidence: ["package.json scripts.dev"],
+    reasoning: "Vite dev script exposes a BrowserPod preview.",
     ...overrides,
   };
 }

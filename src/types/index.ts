@@ -78,13 +78,41 @@ export interface AddRepoPayload {
 export interface RunnabilityResult {
   canRun: boolean;
   entryPoint?: "dev" | "start" | "serve" | string | null;
+  autoCommand?: string | null;
   blockers: string[];
   blockerDetails?: RunnabilityBlockerDetail[];
   previewPath?: string;
   previewPaths?: string[];
+  manualCommands?: RuntimeCommandSuggestion[];
+  runtimeProfile?: RepoRuntimeProfile | null;
 }
 
 export type RunnabilityBlockerSeverity = SecuritySeverity | "warning" | "error" | "unknown";
+
+export type RepoProjectKind = "preview-app" | "api-server" | "library" | "cli" | "test-only" | "unknown";
+export type RepoRuntimeSupportLevel = "auto-preview" | "manual-only" | "analysis-only";
+export type RuntimeCommandConfidence = "high" | "medium" | "low";
+export type RuntimeCommandSource = "package-script" | "package-manager" | "readme" | "static-analysis" | "ai" | "unknown";
+
+export interface RuntimeCommandSuggestion {
+  command: string;
+  description?: string | null;
+  source?: RuntimeCommandSource;
+  confidence?: RuntimeCommandConfidence;
+  reason?: string | null;
+  evidence?: string | null;
+  previewExpected?: boolean;
+}
+
+export interface RepoRuntimeProfile {
+  projectKind: RepoProjectKind;
+  supportLevel: RepoRuntimeSupportLevel;
+  previewExpected: boolean;
+  autoCommand?: string | null;
+  manualCommands: RuntimeCommandSuggestion[];
+  evidence: string[];
+  reasoning?: string | null;
+}
 
 export interface RunnabilityBlockerDetail {
   code: string;

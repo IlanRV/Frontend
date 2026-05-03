@@ -22,6 +22,7 @@ import { FileViewer } from "@/components/repo/FileViewer";
 import { PortalPreview } from "@/components/repo/PortalPreview";
 import { RunButton } from "@/components/repo/RunButton";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
+import { RuntimeProfileCard } from "@/components/repo/RuntimeProfileCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import {
@@ -39,9 +40,9 @@ import { usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
 import { api } from "@/lib/api";
 import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
-import { requiresSandboxConfirmation, runButtonLabel } from "@/lib/security";
+import { getAutoPreviewCommand, getManualCommands, requiresSandboxConfirmation, runButtonLabel } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { FileTreeNode, RegisterRunOptions } from "@/types";
+import type { FileTreeNode, RegisterRunOptions, RuntimeCommandSuggestion } from "@/types";
 
 function findFirstSupportedFile(node: FileTreeNode): string | undefined {
   if (node.type === "file" && node.supported) {
@@ -162,11 +163,13 @@ export function RepoPage() {
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isRunActionPending, setIsRunActionPending] = useState(false);
   const [isSecurityConfirmOpen, setIsSecurityConfirmOpen] = useState(false);
+  const [lastRunCommand, setLastRunCommand] = useState<string | undefined>();
   const [bootAttempt, setBootAttempt] = useState(0);
   const bootedRepoRef = useRef<string | undefined>();
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
   const pendingRunOptionsRef = useRef<RegisterRunOptions>({});
+  const pendingConfirmationRef = useRef<{ command?: string; manualOverride?: boolean; previewExpected?: boolean }>({});
   const reportedSecurityEventsRef = useRef<Set<string>>(new Set());
   const aiReadmeRequestRef = useRef<string | undefined>();
   const securityRescanRequestRef = useRef<string | undefined>();
@@ -187,8 +190,11 @@ export function RepoPage() {
     setBootstrapError(undefined);
     setActiveTab("code");
     setIsRunActionPending(false);
+    setLastRunCommand(undefined);
     autoRunRef.current = false;
     registeredPortalRef.current = undefined;
+    pendingRunOptionsRef.current = {};
+    pendingConfirmationRef.current = {};
     aiReadmeRequestRef.current = undefined;
     securityRescanRequestRef.current = undefined;
   }, [repoId]);
@@ -241,50 +247,61 @@ export function RepoPage() {
     [readFile, repoId, snapshot.state],
   );
 
-  const handleRun = useCallback(async (confirmed = false, manualOverride = false) => {
+  const handleRun = useCallback(async (confirmed = false, manualOverride = false, commandOverride?: string, previewExpectedOverride?: boolean) => {
     if (isRunActionPending) {
       return;
     }
 
     if (!confirmed && requiresSandboxConfirmation(effectiveSecurity)) {
+      pendingConfirmationRef.current = { command: commandOverride, manualOverride, previewExpected: previewExpectedOverride };
       setIsSecurityConfirmOpen(true);
       return;
     }
 
     setIsSecurityConfirmOpen(false);
     setIsRunActionPending(true);
+    const pendingConfirmation = pendingConfirmationRef.current;
+    const requestedCommandOverride = commandOverride ?? (confirmed ? pendingConfirmation.command : undefined);
+    const requestedManualOverride = manualOverride || (confirmed && pendingConfirmation.manualOverride === true);
+    const requestedPreviewExpected = previewExpectedOverride ?? (confirmed ? pendingConfirmation.previewExpected : undefined);
+    pendingConfirmationRef.current = {};
     pendingRunOptionsRef.current = {
       sandboxConfirmed: confirmed && requiresSandboxConfirmation(effectiveSecurity),
-      manualOverride,
+      manualOverride: requestedManualOverride,
     };
 
     try {
       let runnability = effectiveRunnability;
-      const entryPoint = runnability?.entryPoint ?? (manualOverride ? repo?.runScript : undefined);
+      let runCommand = requestedCommandOverride ?? getAutoPreviewCommand(runnability) ?? (requestedManualOverride ? repo?.runScript : undefined);
+      const previewExpected = requestedPreviewExpected ?? (requestedCommandOverride ? false : true);
 
-      if ((!runnability || runnability.canRun) && !snapshot.fileTree && repo?.githubUrl) {
+      if ((!runnability || requestedCommandOverride || requestedManualOverride || getAutoPreviewCommand(runnability)) && !snapshot.fileTree && repo?.githubUrl) {
         const prepared = await bootstrapRepo(repo.githubUrl);
         setFileTree(prepared.fileTree);
         saveCachedFileTree(repo.id, prepared.fileTree);
         runnability = extraction?.runnability ?? prepared.runnability;
+        runCommand = requestedCommandOverride ?? getAutoPreviewCommand(runnability) ?? (requestedManualOverride ? repo.runScript : undefined);
       }
 
-      if ((!runnability?.canRun && !manualOverride) || !entryPoint) {
+      if ((!requestedManualOverride && !requestedCommandOverride && !getAutoPreviewCommand(runnability)) || !runCommand) {
         toast.error("This repo is not runnable in BrowserPod yet");
         return;
       }
 
-      await runProject(entryPoint);
-      if (snapshot.portalUrl && registeredPortalRef.current !== snapshot.portalUrl) {
+      await runProject(runCommand, { previewExpected });
+      setLastRunCommand(runCommand);
+      if (previewExpected && snapshot.portalUrl && registeredPortalRef.current !== snapshot.portalUrl) {
         registeredPortalRef.current = snapshot.portalUrl;
         await registerRun(snapshot.portalUrl, pendingRunOptionsRef.current);
       }
-      if (repo?.id) {
+      if (previewExpected && repo?.id) {
         setStoredRunIntent(repo.id, true);
       }
-      setActiveTab("live");
+      if (previewExpected) {
+        setActiveTab("live");
+      }
       setIsConsoleOpen(true);
-      toast.success("Project starting in BrowserPod");
+      toast.success(previewExpected ? "Project starting in BrowserPod" : "Sandbox command started in BrowserPod");
     } catch (runError) {
       toast.error(runError instanceof Error ? runError.message : "Unable to run project");
     } finally {
@@ -312,6 +329,14 @@ export function RepoPage() {
       setIsRunActionPending(false);
     }
   }, [isRunActionPending, registerStop, repo?.id, stopProject]);
+
+  const handleAutoCommand = useCallback((command: string) => {
+    void handleRun(false, false, command, true);
+  }, [handleRun]);
+
+  const handleManualCommand = useCallback((command: RuntimeCommandSuggestion) => {
+    void handleRun(false, true, command.command, command.previewExpected ?? false);
+  }, [handleRun]);
 
   useEffect(() => {
     if (!repo?.githubUrl || bootedRepoRef.current === repo.id) {
@@ -349,12 +374,15 @@ export function RepoPage() {
           autoRunRef.current = true;
           void checkRunnability()
             .then((runnability) => {
-              if (!runnability.canRun || !runnability.entryPoint) {
+              const command = getAutoPreviewCommand(runnability);
+
+              if (!command) {
                 setStoredRunIntent(repo.id, false);
                 return;
               }
 
-              return runProject(runnability.entryPoint)
+              setLastRunCommand(command);
+              return runProject(command, { previewExpected: true })
               .then(() => {
                 setStoredRunIntent(repo.id, true);
                 setActiveTab("live");
@@ -474,8 +502,10 @@ export function RepoPage() {
   const firstSupportedPath = effectiveFileTree ? findFirstSupportedFile(effectiveFileTree) : undefined;
   const analysisProgress = repo?.analysisProgress ?? extraction?.analysisProgress ?? null;
   const isExtractionInFlight = repo?.status === "cloning" || repo?.status === "analyzing";
-  const safeRunLabel = effectiveRunnability?.canRun ? runButtonLabel(effectiveSecurity) : "Run";
-  const canManualOverride = !effectiveRunnability?.canRun && Boolean(repo?.runScript);
+  const autoPreviewCommand = getAutoPreviewCommand(effectiveRunnability);
+  const manualCommands = getManualCommands(effectiveRunnability);
+  const safeRunLabel = autoPreviewCommand ? runButtonLabel(effectiveSecurity) : "Run";
+  const canManualOverride = !autoPreviewCommand && Boolean(repo?.runScript) && manualCommands.length === 0;
   const isTreeLoading =
     isLoading ||
     ((snapshot.state === "booting" || snapshot.state === "cloning") && !effectiveFileTree);
@@ -517,7 +547,12 @@ export function RepoPage() {
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 xl:max-w-[104rem] xl:pr-[25rem]">
-      <Dialog open={isSecurityConfirmOpen} onOpenChange={setIsSecurityConfirmOpen}>
+      <Dialog open={isSecurityConfirmOpen} onOpenChange={(open) => {
+        setIsSecurityConfirmOpen(open);
+        if (!open) {
+          pendingConfirmationRef.current = {};
+        }
+      }}>
         <DialogContent>
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
@@ -579,7 +614,7 @@ export function RepoPage() {
           </Button>
           <RunnabilityBadge result={effectiveRunnability} />
           <RunButton
-            canRun={Boolean(effectiveRunnability?.canRun)}
+            canRun={Boolean(autoPreviewCommand)}
             isRunning={isRunning}
             isBusy={isBusy}
             label={safeRunLabel}
@@ -587,7 +622,7 @@ export function RepoPage() {
             onStop={() => void handleStop()}
           />
           {canManualOverride && !isRunning && (
-            <Button variant="outline" size="sm" disabled={isBusy} onClick={() => void handleRun(true, true)}>
+            <Button variant="outline" size="sm" disabled={isBusy} onClick={() => void handleRun(false, true)}>
               Run with manual override
             </Button>
           )}
@@ -626,6 +661,15 @@ export function RepoPage() {
             </Button>
           </AlertDescription>
         </Alert>
+      )}
+
+      {!error && (
+        <RuntimeProfileCard
+          runnability={effectiveRunnability}
+          isBusy={isBusy}
+          onRunAuto={handleAutoCommand}
+          onRunManualCommand={handleManualCommand}
+        />
       )}
 
       {!error && (
@@ -704,6 +748,11 @@ export function RepoPage() {
                   previewPath={effectiveRunnability?.previewPath}
                   previewPaths={effectiveRunnability?.previewPaths}
                   riskLevel={effectiveSecurity?.riskLevel}
+                  command={lastRunCommand ?? autoPreviewCommand}
+                  projectKind={effectiveRunnability?.runtimeProfile?.projectKind}
+                  runtimeEventCount={(snapshot.securityEvents?.length ?? 0) + (security?.runtimeSecurity.eventCount ?? 0)}
+                  isStopping={isBusy}
+                  onStop={isRunning ? () => void handleStop() : undefined}
                 />
               </TabsContent>
 

@@ -409,6 +409,37 @@ describe("PodLifecycleManager project lifecycle", () => {
     expect(snapshots.map((snapshot) => snapshot.state)).toEqual(expect.arrayContaining(["installing", "running", "stopping", "ready"]));
   });
 
+  it("runs backend-provided command strings through the sandbox shell", async () => {
+    const kill = vi.fn().mockResolvedValue(undefined);
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "sh" && args[0] === "-lc") {
+        return { kill };
+      }
+      return {};
+    });
+    const { manager } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("npm run dev", { previewExpected: true });
+
+    expect(pod.run).toHaveBeenCalledWith("sh", ["-lc", "npm run dev"], expect.objectContaining({ cwd: "/home/user/repo" }));
+  });
+
+  it("runs non-preview manual commands without waiting for a portal", async () => {
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("npm test", { previewExpected: false });
+
+    expect(pod.run).toHaveBeenCalledWith("sh", ["-lc", "npm test"], expect.objectContaining({ cwd: "/home/user/repo" }));
+    expect(snapshots.at(-1)?.state).toBe("ready");
+    expect(snapshots.at(-1)?.securityEvents).toBeUndefined();
+  });
+
   it("records a clear startup timeout event when no portal opens", async () => {
     vi.useFakeTimers();
     const { pod } = makePod();

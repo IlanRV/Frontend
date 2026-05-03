@@ -143,8 +143,12 @@ export function usePod(repoId: string | undefined) {
   );
 
   const runProject = useCallback(
-    async (entryPoint: NonNullable<RunnabilityResult["entryPoint"]>) => {
-      return getManager().runProject(entryPoint);
+    async (entryPoint: NonNullable<RunnabilityResult["entryPoint"]> | string, options?: { previewExpected?: boolean }) => {
+      if (!options) {
+        return getManager().runProject(entryPoint);
+      }
+
+      return getManager().runProject(entryPoint, options);
     },
     [getManager],
   );

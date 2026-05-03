@@ -12,11 +12,17 @@ import type {
   ExtractionResponse,
   Repo,
   RepoFileResponse,
+  RepoProjectKind,
   RegisterRunOptions,
   RegisterSecurityEventResponse,
   RepoSecurityResponse,
+  RepoRuntimeProfile,
+  RepoRuntimeSupportLevel,
   RunnabilityBlockerSeverity,
   RunnabilityResult,
+  RuntimeCommandConfidence,
+  RuntimeCommandSource,
+  RuntimeCommandSuggestion,
   SecurityConfidence,
   SecurityScan,
   SecuritySeverity,
@@ -95,6 +101,7 @@ function normalizeRepo(payload: unknown): Repo {
     ...(payload as unknown as Repo),
     id: repoId,
     repoId,
+    runnability: normalizeRunnability(payload.runnability),
     analysisProgress: normalizeAnalysisProgress(payload.analysisProgress),
   };
 }
@@ -169,12 +176,79 @@ function normalizeStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function normalizeProjectKind(value: unknown): RepoProjectKind {
+  return value === "preview-app" || value === "api-server" || value === "library" || value === "cli" || value === "test-only" || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function normalizeSupportLevel(value: unknown): RepoRuntimeSupportLevel {
+  return value === "auto-preview" || value === "manual-only" || value === "analysis-only"
+    ? value
+    : "analysis-only";
+}
+
+function normalizeCommandConfidence(value: unknown): RuntimeCommandConfidence {
+  return value === "high" || value === "medium" || value === "low" ? value : "low";
+}
+
+function normalizeCommandSource(value: unknown): RuntimeCommandSource {
+  return value === "package-script" || value === "package-manager" || value === "readme" || value === "static-analysis" || value === "ai" || value === "unknown"
+    ? value
+    : "unknown";
+}
+
+function normalizeRuntimeCommandSuggestion(payload: unknown): RuntimeCommandSuggestion | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const command = readString(payload, "command")?.trim();
+
+  if (!command) {
+    return null;
+  }
+
+  return {
+    command,
+    description: readString(payload, "description") ?? null,
+    source: normalizeCommandSource(payload.source),
+    confidence: normalizeCommandConfidence(payload.confidence),
+    reason: readString(payload, "reason") ?? null,
+    evidence: readString(payload, "evidence") ?? null,
+    previewExpected: typeof payload.previewExpected === "boolean" ? payload.previewExpected : undefined,
+  };
+}
+
+function normalizeRuntimeCommands(value: unknown) {
+  return Array.isArray(value)
+    ? value.map(normalizeRuntimeCommandSuggestion).filter((item): item is RuntimeCommandSuggestion => Boolean(item))
+    : [];
+}
+
+function normalizeRuntimeProfile(payload: unknown): RepoRuntimeProfile | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  return {
+    projectKind: normalizeProjectKind(payload.projectKind),
+    supportLevel: normalizeSupportLevel(payload.supportLevel),
+    previewExpected: payload.previewExpected === true,
+    autoCommand: readString(payload, "autoCommand") ?? null,
+    manualCommands: normalizeRuntimeCommands(payload.manualCommands),
+    evidence: normalizeStringArray(payload.evidence),
+    reasoning: readString(payload, "reasoning") ?? null,
+  };
+}
+
 function normalizeRunnability(payload: unknown): RunnabilityResult | null {
   if (!isRecord(payload)) {
     return null;
   }
 
   const entryPoint = payload.entryPoint;
+  const runtimeProfile = normalizeRuntimeProfile(payload.runtimeProfile);
   const blockerDetails = Array.isArray(payload.blockerDetails)
     ? payload.blockerDetails.filter(isRecord).map((blocker) => ({
         code: readString(blocker, "code") ?? "runtime-blocker",
@@ -189,10 +263,13 @@ function normalizeRunnability(payload: unknown): RunnabilityResult | null {
   return {
     canRun: payload.canRun === true,
     entryPoint: typeof entryPoint === "string" ? entryPoint : null,
+    autoCommand: readString(payload, "autoCommand") ?? runtimeProfile?.autoCommand ?? null,
     blockers: normalizeStringArray(payload.blockers),
     blockerDetails,
     previewPath: readString(payload, "previewPath"),
     previewPaths: normalizeStringArray(payload.previewPaths),
+    manualCommands: normalizeRuntimeCommands(payload.manualCommands),
+    runtimeProfile,
   };
 }
 

@@ -1,7 +1,10 @@
 import type {
+  RepoProjectKind,
+  RepoRuntimeSupportLevel,
   RunnabilityBlockerDetail,
   RunnabilityBlockerSeverity,
   RunnabilityResult,
+  RuntimeCommandSuggestion,
   RuntimeSecurityEventCategory,
   SandboxSecurityEvent,
   SecurityScan,
@@ -14,6 +17,86 @@ export function requiresSandboxConfirmation(security: SecurityScan | null | unde
 
 export function runButtonLabel(security: SecurityScan | null | undefined) {
   return requiresSandboxConfirmation(security) ? "Run in BrowserPod sandbox anyway" : "Run";
+}
+
+function cleanCommand(command: string | null | undefined) {
+  const trimmed = command?.trim();
+  return trimmed ? trimmed : undefined;
+}
+
+export function getAutoPreviewCommand(runnability: RunnabilityResult | null | undefined) {
+  if (!runnability?.canRun) {
+    return undefined;
+  }
+
+  const profile = runnability.runtimeProfile;
+
+  if (profile) {
+    if (profile.supportLevel !== "auto-preview" || !profile.previewExpected) {
+      return undefined;
+    }
+
+    return cleanCommand(profile.autoCommand) ?? cleanCommand(runnability.autoCommand);
+  }
+
+  return cleanCommand(runnability.autoCommand) ?? cleanCommand(runnability.entryPoint);
+}
+
+export function getManualCommands(runnability: RunnabilityResult | null | undefined): RuntimeCommandSuggestion[] {
+  const commands = [
+    ...(runnability?.runtimeProfile?.manualCommands ?? []),
+    ...(runnability?.manualCommands ?? []),
+  ];
+  const seen = new Set<string>();
+
+  return commands.filter((command) => {
+    const value = cleanCommand(command.command);
+
+    if (!value || seen.has(value)) {
+      return false;
+    }
+
+    seen.add(value);
+    return true;
+  });
+}
+
+export function isManualOnly(runnability: RunnabilityResult | null | undefined) {
+  return runnability?.runtimeProfile?.supportLevel === "manual-only";
+}
+
+export function isAnalysisOnly(runnability: RunnabilityResult | null | undefined) {
+  return runnability?.runtimeProfile?.supportLevel === "analysis-only";
+}
+
+export function projectKindLabel(kind: RepoProjectKind | undefined) {
+  switch (kind) {
+    case "preview-app":
+      return "Preview app";
+    case "api-server":
+      return "API server";
+    case "library":
+      return "Library";
+    case "cli":
+      return "CLI";
+    case "test-only":
+      return "Test-only";
+    default:
+      return "Unknown";
+  }
+}
+
+export function supportLevelLabel(level: RepoRuntimeSupportLevel | undefined) {
+  switch (level) {
+    case "auto-preview":
+      return "Auto preview";
+    case "manual-only":
+      return "Manual only";
+    case "analysis-only":
+      return "Analysis only";
+    default:
+      return "Unknown support";
+  }
 }
 
 function normalizeBlockerSeverity(severity: RunnabilityBlockerSeverity | string | undefined): RunnabilityBlockerSeverity {

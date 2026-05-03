@@ -1,13 +1,19 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  getAutoPreviewCommand,
+  getManualCommands,
+  isAnalysisOnly,
+  isManualOnly,
   normalizeRunnabilityBlockers,
+  projectKindLabel,
   requiresSandboxConfirmation,
   runButtonLabel,
   severityRank,
+  supportLevelLabel,
   suspiciousLogEvent,
 } from "@/lib/security";
-import { makeRunnability, makeSecurityScan } from "@/test/factories";
+import { makeRunnability, makeRuntimeProfile, makeSecurityScan } from "@/test/factories";
 
 describe("security helpers", () => {
   it("requires explicit sandbox confirmation for high and critical risk repos", () => {
@@ -75,5 +81,44 @@ describe("security helpers", () => {
     expect(severityRank("critical")).toBeGreaterThan(severityRank("high"));
     expect(severityRank("high")).toBeGreaterThan(severityRank("medium"));
     expect(severityRank("medium")).toBeGreaterThan(severityRank("low"));
+  });
+
+  it("only auto-runs profiles that are expected to open previews", () => {
+    expect(getAutoPreviewCommand(makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({ supportLevel: "auto-preview", previewExpected: true, autoCommand: "npm run dev" }),
+    }))).toBe("npm run dev");
+    expect(getAutoPreviewCommand(makeRunnability({
+      canRun: true,
+      runtimeProfile: makeRuntimeProfile({ supportLevel: "manual-only", previewExpected: false, autoCommand: null }),
+    }))).toBeUndefined();
+    expect(getAutoPreviewCommand(makeRunnability({
+      canRun: true,
+      runtimeProfile: makeRuntimeProfile({ supportLevel: "analysis-only", previewExpected: false, autoCommand: null }),
+    }))).toBeUndefined();
+    expect(getAutoPreviewCommand(makeRunnability({ entryPoint: "start" }))).toBe("start");
+  });
+
+  it("deduplicates manual commands and labels profile states", () => {
+    const runnability = makeRunnability({
+      canRun: false,
+      runtimeProfile: makeRuntimeProfile({
+        projectKind: "cli",
+        supportLevel: "manual-only",
+        previewExpected: false,
+        autoCommand: null,
+        manualCommands: [
+          { command: "npm test", source: "package-script", confidence: "high" },
+          { command: "npm test", source: "ai", confidence: "low" },
+        ],
+      }),
+      manualCommands: [{ command: "node cli.js --help", source: "ai", confidence: "medium" }],
+    });
+
+    expect(isManualOnly(runnability)).toBe(true);
+    expect(isAnalysisOnly(runnability)).toBe(false);
+    expect(getManualCommands(runnability).map((command) => command.command)).toEqual(["npm test", "node cli.js --help"]);
+    expect(projectKindLabel("cli")).toBe("CLI");
+    expect(supportLevelLabel("manual-only")).toBe("Manual only");
   });
 });

@@ -13,7 +13,7 @@ import { usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
 import { useWorkspace, useWorkspaces } from "@/hooks/useWorkspace";
 import { api } from "@/lib/api";
-import { makeExtraction, makeFileTree, makeRepo, makeRunnability, makeWorkspace } from "@/test/factories";
+import { makeExtraction, makeFileTree, makeRepo, makeRunnability, makeRuntimeProfile, makeWorkspace } from "@/test/factories";
 import { makeSecurityScan } from "@/test/factories";
 
 vi.mock("@/hooks/useWorkspace", () => ({
@@ -358,8 +358,88 @@ describe("RepoPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "Run" }));
 
-    await waitFor(() => expect(pod.runProject).toHaveBeenCalledWith("dev"));
+    await waitFor(() => expect(pod.runProject).toHaveBeenCalledWith("dev", { previewExpected: true }));
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
+  });
+
+  it("uses backend autoCommand only for auto-preview runtime profiles", async () => {
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const runnability = makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({ autoCommand: "npm run dev" }),
+    });
+    mockedUseRepo.mockReturnValue(repoHook({ extraction: makeExtraction({ runnability }) }));
+    mockedUsePod.mockReturnValue({ ...podHook(), runProject });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByText("Runtime profile")).toBeInTheDocument();
+    expect(screen.getByText("Auto preview command")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm run dev", { previewExpected: true }));
+  });
+
+  it("keeps manual-only commands out of the primary run path", async () => {
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const registerRun = vi.fn().mockResolvedValue(makeRepo({ status: "running" }));
+    const runnability = makeRunnability({
+      canRun: false,
+      entryPoint: null,
+      blockers: ["CLI project"],
+      runtimeProfile: makeRuntimeProfile({
+        projectKind: "cli",
+        supportLevel: "manual-only",
+        previewExpected: false,
+        autoCommand: null,
+        manualCommands: [{ command: "npm test", description: "Run tests", source: "package-script", confidence: "high" }],
+      }),
+    });
+    mockedUseRepo.mockReturnValue(repoHook({
+      repo: makeRepo({ runnability, portalUrl: undefined }),
+      extraction: makeExtraction({ runnability }),
+      registerRun,
+    }));
+    mockedUsePod.mockReturnValue({
+      ...podHook(),
+      snapshot: { repoId: "repo-1", state: "ready", terminal: [], fileTree: makeFileTree(), runnability },
+      runProject,
+    });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.getByText("Manual only")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run npm test in BrowserPod" }));
+
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm test", { previewExpected: false }));
+    expect(registerRun).not.toHaveBeenCalled();
+  });
+
+  it("shows analysis-only runtime profiles without run controls", () => {
+    const runnability = makeRunnability({
+      canRun: false,
+      entryPoint: null,
+      blockers: ["Library package"],
+      runtimeProfile: makeRuntimeProfile({
+        projectKind: "library",
+        supportLevel: "analysis-only",
+        previewExpected: false,
+        autoCommand: null,
+        manualCommands: [{ command: "npm test", source: "package-script", confidence: "medium" }],
+      }),
+    });
+    mockedUseRepo.mockReturnValue(repoHook({ extraction: makeExtraction({ runnability }) }));
+    mockedUsePod.mockReturnValue({
+      ...podHook(),
+      snapshot: { repoId: "repo-1", state: "ready", terminal: [], fileTree: makeFileTree(), runnability },
+    });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByText("Analysis only")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Run npm test in BrowserPod" })).not.toBeInTheDocument();
   });
 
   it("disables run and shows blocker details when backend says the repo is not runnable", async () => {
@@ -431,7 +511,7 @@ describe("RepoPage", () => {
 
     await userEvent.click(screen.getByRole("button", { name: "I understand, run in BrowserPod sandbox" }));
 
-    await waitFor(() => expect(runProject).toHaveBeenCalledWith("dev"));
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("dev", { previewExpected: true }));
     await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example", { sandboxConfirmed: true, manualOverride: false }));
   });
 
@@ -451,7 +531,7 @@ describe("RepoPage", () => {
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     await userEvent.click(screen.getByRole("button", { name: "Run with manual override" }));
 
-    await waitFor(() => expect(runProject).toHaveBeenCalledWith("start"));
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("start", { previewExpected: true }));
     await waitFor(() => expect(registerRun).toHaveBeenCalledWith("https://portal.example", { sandboxConfirmed: false, manualOverride: true }));
   });
 

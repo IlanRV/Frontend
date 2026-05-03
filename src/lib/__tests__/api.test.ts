@@ -157,7 +157,27 @@ describe("api endpoint contracts", () => {
 
   it("normalizes AI extraction and README payloads", async () => {
     fetchMock
-      .mockResolvedValueOnce(jsonResponse({ extractionId: "ext-1", status: "ready", aiReadme: "# Docs" }))
+      .mockResolvedValueOnce(jsonResponse({
+        extractionId: "ext-1",
+        status: "ready",
+        aiReadme: "# Docs",
+        runnability: {
+          canRun: true,
+          entryPoint: "dev",
+          autoCommand: "npm run dev",
+          blockers: [],
+          manualCommands: [{ command: "npm test", source: "package-script", confidence: "high" }],
+          runtimeProfile: {
+            projectKind: "preview-app",
+            supportLevel: "auto-preview",
+            previewExpected: true,
+            autoCommand: "npm run dev",
+            manualCommands: [{ command: "npm run build", source: "package-script", confidence: "medium" }],
+            evidence: ["package.json scripts.dev"],
+            reasoning: "Vite app",
+          },
+        },
+      }))
       .mockResolvedValueOnce(jsonResponse({ extractionId: "ext-1", status: "ready", aiReadme: "# Docs" }));
 
     await expect(api.ai.getExtraction("repo-1")).resolves.toMatchObject({
@@ -166,6 +186,17 @@ describe("api endpoint contracts", () => {
       aiReadme: "# Docs",
       functions: [],
       dependencies: {},
+      runnability: {
+        autoCommand: "npm run dev",
+        manualCommands: [expect.objectContaining({ command: "npm test", source: "package-script" })],
+        runtimeProfile: expect.objectContaining({
+          projectKind: "preview-app",
+          supportLevel: "auto-preview",
+          autoCommand: "npm run dev",
+          manualCommands: [expect.objectContaining({ command: "npm run build" })],
+          evidence: ["package.json scripts.dev"],
+        }),
+      },
     });
     await expect(api.ai.getReadme("repo-1")).resolves.toMatchObject({ title: "AI README", raw: "# Docs" });
   });

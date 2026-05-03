@@ -10,10 +10,11 @@ import { PortalPreview } from "@/components/repo/PortalPreview";
 import { RepoCard } from "@/components/repo/RepoCard";
 import { RunButton } from "@/components/repo/RunButton";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
+import { RuntimeProfileCard } from "@/components/repo/RuntimeProfileCard";
 import { api } from "@/lib/api";
 import { saveCachedFileTree } from "@/lib/fileTreeCache";
 import { usePod } from "@/hooks/usePod";
-import { makeFileTree, makeRepo, makeRunnability } from "@/test/factories";
+import { makeFileTree, makeRepo, makeRunnability, makeRuntimeProfile } from "@/test/factories";
 
 vi.mock("@/hooks/usePod", () => ({
   usePod: vi.fn(),
@@ -154,6 +155,73 @@ describe("PortalPreview", () => {
     await userEvent.type(screen.getByLabelText("Preview path"), "docs");
     await userEvent.click(screen.getByRole("button", { name: "Load path" }));
     expect(screen.getByTitle("BrowserPod live preview")).toHaveAttribute("src", "https://portal.example/docs");
+  });
+
+  it("shows runtime metadata and stop controls", async () => {
+    const onStop = vi.fn();
+    render(
+      <PortalPreview
+        portalUrl="https://portal.example"
+        command="npm run dev"
+        projectKind="preview-app"
+        runtimeEventCount={2}
+        onStop={onStop}
+      />,
+    );
+
+    expect(screen.getByText("Sandboxed by BrowserPod")).toBeInTheDocument();
+    expect(screen.getByText("Preview app")).toBeInTheDocument();
+    expect(screen.getByText("npm run dev")).toBeInTheDocument();
+    expect(screen.getByText("2 runtime alert(s)")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stop sandbox" }));
+    expect(onStop).toHaveBeenCalledOnce();
+  });
+});
+
+describe("RuntimeProfileCard", () => {
+  it("renders auto-preview commands and runtime evidence", async () => {
+    const onRunAuto = vi.fn();
+    render(<RuntimeProfileCard runnability={makeRunnability({ autoCommand: "npm run dev", runtimeProfile: makeRuntimeProfile() })} onRunAuto={onRunAuto} />);
+
+    expect(screen.getByText("Runtime profile")).toBeInTheDocument();
+    expect(screen.getByText("Auto preview command")).toBeInTheDocument();
+    expect(screen.getByText("npm run dev")).toBeInTheDocument();
+    expect(screen.getByText("package.json scripts.dev")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run preview" }));
+    expect(onRunAuto).toHaveBeenCalledWith("npm run dev");
+  });
+
+  it("renders manual-only commands without enabling analysis-only runs", async () => {
+    const onRunManualCommand = vi.fn();
+    const { rerender } = render(<RuntimeProfileCard runnability={makeRunnability({
+      canRun: false,
+      runtimeProfile: makeRuntimeProfile({
+        projectKind: "cli",
+        supportLevel: "manual-only",
+        previewExpected: false,
+        autoCommand: null,
+        manualCommands: [{ command: "npm test", description: "Run tests", source: "package-script", confidence: "high" }],
+      }),
+    })} onRunManualCommand={onRunManualCommand} />);
+
+    expect(screen.getByText("Manual only")).toBeInTheDocument();
+    expect(screen.getByText("npm test")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Run npm test in BrowserPod" }));
+    expect(onRunManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test" }));
+
+    rerender(<RuntimeProfileCard runnability={makeRunnability({
+      canRun: false,
+      runtimeProfile: makeRuntimeProfile({
+        projectKind: "library",
+        supportLevel: "analysis-only",
+        previewExpected: false,
+        autoCommand: null,
+        manualCommands: [{ command: "npm test", source: "package-script", confidence: "high" }],
+      }),
+    })} onRunManualCommand={onRunManualCommand} />);
+
+    expect(screen.getByText("Analysis only")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Run npm test in BrowserPod" })).not.toBeInTheDocument();
   });
 });
 

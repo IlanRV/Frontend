@@ -1,16 +1,22 @@
-import { ExternalLink, ShieldAlert } from "lucide-react";
+import { ExternalLink, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import type { SecurityScan } from "@/types";
+import { projectKindLabel } from "@/lib/security";
+import type { RepoProjectKind, SecurityScan } from "@/types";
 
 interface PortalPreviewProps {
   portalUrl?: string;
   previewPath?: string;
   previewPaths?: string[];
   riskLevel?: SecurityScan["riskLevel"];
+  command?: string;
+  projectKind?: RepoProjectKind;
+  runtimeEventCount?: number;
+  isStopping?: boolean;
+  onStop?: () => void;
 }
 
 function normalizePreviewPath(path: string) {
@@ -31,7 +37,7 @@ function appendPortalPath(portalUrl: string, path: string) {
   return url.toString();
 }
 
-export function PortalPreview({ portalUrl, previewPath, previewPaths, riskLevel }: PortalPreviewProps) {
+export function PortalPreview({ portalUrl, previewPath, previewPaths, riskLevel, command, projectKind, runtimeEventCount = 0, isStopping, onStop }: PortalPreviewProps) {
   const [path, setPath] = useState(previewPath ?? "/");
   const iframeUrl = portalUrl ? appendPortalPath(portalUrl, path) : undefined;
   const isHighRisk = riskLevel === "critical" || riskLevel === "high";
@@ -67,16 +73,27 @@ export function PortalPreview({ portalUrl, previewPath, previewPaths, riskLevel 
                 <ShieldAlert className="h-3.5 w-3.5" />
                 Sandboxed by BrowserPod
               </Badge>
+              {projectKind && <Badge variant="secondary">{projectKindLabel(projectKind)}</Badge>}
+              {command && <Badge variant="outline">{command}</Badge>}
+              {runtimeEventCount > 0 && <Badge variant="warning">{runtimeEventCount} runtime alert(s)</Badge>}
               {isHighRisk && <Badge variant="danger">High-risk repo</Badge>}
             </div>
             <span className="block truncate text-muted-foreground">{iframeUrl}</span>
           </div>
-          <Button variant="ghost" size="sm" asChild>
-            <a href={iframeUrl} target="_blank" rel="noreferrer">
-              <ExternalLink className="h-4 w-4" />
-              Open
-            </a>
-          </Button>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            {onStop && (
+              <Button variant="outline" size="sm" onClick={onStop} disabled={isStopping}>
+                <Square className="h-4 w-4" />
+                Stop sandbox
+              </Button>
+            )}
+            <Button variant="ghost" size="sm" asChild>
+              <a href={iframeUrl} target="_blank" rel="noreferrer">
+                <ExternalLink className="h-4 w-4" />
+                Open
+              </a>
+            </Button>
+          </div>
         </div>
         <p className="rounded-md border border-cyan-200 bg-cyan-50 p-2 text-xs leading-5 text-cyan-950 dark:border-cyan-900 dark:bg-cyan-950 dark:text-cyan-100">
           Running inside BrowserPod sandbox. This project cannot access your real filesystem, shell, SSH keys, cloud credentials, or local environment.

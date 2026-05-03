@@ -111,6 +111,16 @@ interface PackageJson {
 
 type RunScriptName = NonNullable<RunnabilityResult["entryPoint"]>;
 
+interface ProjectRunOptions {
+  previewExpected?: boolean;
+}
+
+interface ProjectRunInvocation {
+  command: string;
+  args: string[];
+  display: string;
+}
+
 type TextWritableFile = {
   write(data: string): Promise<number>;
   close(): Promise<void>;
@@ -616,6 +626,28 @@ function commandPreview(command: string, args: string[]) {
   return value.length > 240 ? `${value.slice(0, 240)}...` : value;
 }
 
+function projectRunInvocation(input: string): ProjectRunInvocation {
+  const value = input.trim();
+
+  if (!value) {
+    throw new Error("No BrowserPod command was provided");
+  }
+
+  if (/^[\w:-]+$/.test(value)) {
+    return {
+      command: "npm",
+      args: ["run", value],
+      display: `npm run ${value}`,
+    };
+  }
+
+  return {
+    command: "sh",
+    args: ["-lc", value],
+    display: value,
+  };
+}
+
 function terminalChunkToText(chunk: string | Uint8Array) {
   return typeof chunk === "string" ? chunk : new TextDecoder().decode(chunk);
 }
@@ -780,7 +812,7 @@ export class PodLifecycleManager {
     }
   }
 
-  private waitForPortalStartup(entryPoint: RunScriptName) {
+  private waitForPortalStartup(displayCommand: string) {
     if (this.snapshot.portalUrl) {
       return Promise.resolve(true);
     }
@@ -803,7 +835,7 @@ export class PodLifecycleManager {
           "Dev server did not become ready",
           "The project started a process but did not expose a BrowserPod portal before the timeout.",
           "No BrowserPod portal opened within 30 seconds.",
-          `npm run ${entryPoint}`,
+          displayCommand,
         ));
         void this.stopProject().catch(() => undefined);
         resolve(false);
@@ -1303,7 +1335,7 @@ export class PodLifecycleManager {
     return uniquePreviewPaths(detected);
   }
 
-  async runProject(entryPoint: RunScriptName) {
+  async runProject(entryPoint: RunScriptName | string, options: ProjectRunOptions = {}) {
     if (this.runLock) {
       return this.runLock;
     }
@@ -1314,6 +1346,9 @@ export class PodLifecycleManager {
 
     const runPromise = (async () => {
       try {
+        const invocation = projectRunInvocation(entryPoint);
+        const previewExpected = options.previewExpected ?? true;
+
         this.emit({ state: "installing", error: undefined });
         this.log("Installing npm dependencies without lifecycle scripts");
         await this.runCommandWithTimeout(
@@ -1334,18 +1369,22 @@ export class PodLifecycleManager {
         );
 
         this.emit({ state: "running", portalUrl: undefined });
-        this.log(`Starting npm script: ${entryPoint}`);
+        this.log(`Starting sandbox command: ${invocation.display}`);
         this.startRuntimeSecurityMonitor();
 
-        const process = await this.runCommand("npm", ["run", entryPoint], { cwd: REPO_ROOT });
+        const process = await this.runCommand(invocation.command, invocation.args, { cwd: REPO_ROOT });
         this.runningProcess = process;
 
-        if (!isKillableProcess(process)) {
-          const didOpenPortal = await this.waitForPortalStartup(entryPoint);
+        if (previewExpected && !isKillableProcess(process)) {
+          const didOpenPortal = await this.waitForPortalStartup(invocation.display);
 
           if (!didOpenPortal) {
             throw new Error("The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.");
           }
+        } else if (!previewExpected && !isKillableProcess(process)) {
+          this.runningProcess = undefined;
+          this.stopRuntimeSecurityMonitor();
+          this.emit({ state: "ready" });
         }
       } catch (error) {
         this.stopRuntimeSecurityMonitor();
@@ -1407,7 +1446,7 @@ export class PodLifecycleManager {
       }
     }
 
-    const killPatterns = ["npm run", "nodemon", "node server", "node app", "node index"];
+    const killPatterns = ["npm run", "npm start", "pnpm", "yarn", "vite", "nodemon", "node server", "node app", "node index"];
 
     for (const pattern of killPatterns) {
       try {
