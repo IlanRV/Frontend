@@ -418,9 +418,10 @@ describe("PodLifecycleManager project lifecycle", () => {
     await manager.boot(document.createElement("div"));
     const run = manager.runProject("dev");
     await Promise.resolve();
+    const startupTimeout = expect(run).rejects.toThrow("The sandbox was stopped because the project did not finish starting");
     await vi.advanceTimersByTimeAsync(30_000);
 
-    await expect(run).rejects.toThrow("The sandbox was stopped because the project did not finish starting");
+    await startupTimeout;
     expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
       expect.objectContaining({ code: "startup-timeout", title: "Sandbox startup timed out" }),
     ]));
