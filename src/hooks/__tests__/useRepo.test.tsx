@@ -112,6 +112,40 @@ describe("useRepo", () => {
     expect(result.current.repo?.status).toBe("ready");
   });
 
+  it("keeps repo content visible during extraction polling", async () => {
+    vi.useFakeTimers();
+    let resolveNextRepo: ((repo: ReturnType<typeof makeRepo>) => void) | undefined;
+    reposApi.get
+      .mockResolvedValueOnce(makeRepo({ status: "analyzing" }))
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof makeRepo>>((resolve) => {
+        resolveNextRepo = resolve;
+      }));
+
+    const { result } = renderHook(() => useRepo("repo-1"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.repo?.status).toBe("analyzing");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(2000);
+    });
+
+    expect(reposApi.get).toHaveBeenCalledTimes(2);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.repo?.status).toBe("analyzing");
+
+    await act(async () => {
+      resolveNextRepo?.(makeRepo({ status: "ready" }));
+      await Promise.resolve();
+    });
+
+    expect(result.current.repo?.status).toBe("ready");
+  });
+
   it("loads and reports runtime security events", async () => {
     reposApi.get.mockResolvedValueOnce(makeRepo());
     reposApi.getSecurity.mockResolvedValue({

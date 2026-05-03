@@ -83,7 +83,7 @@ export function useRepo(repoId: string | undefined) {
       return;
     }
 
-    setState((current) => ({ ...current, isLoading: true, error: undefined }));
+    setState((current) => ({ ...current, isLoading: !current.repo, error: undefined }));
 
     try {
       const repo = await api.repos.get(repoId);
@@ -106,7 +106,6 @@ export function useRepo(repoId: string | undefined) {
     } catch (error) {
       setState((current) => ({
         ...current,
-        repo: undefined,
         isLoading: false,
         error: getErrorMessage(error, "Unable to load repo"),
       }));

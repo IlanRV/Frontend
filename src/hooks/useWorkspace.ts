@@ -22,17 +22,17 @@ export function useWorkspaces() {
   });
 
   const refresh = useCallback(async () => {
-    setState((current) => ({ ...current, isLoading: true, error: undefined }));
+    setState((current) => ({ ...current, isLoading: !current.data, error: undefined }));
 
     try {
       const workspaces = await api.workspaces.list();
       setState({ data: workspaces, isLoading: false });
     } catch (error) {
-      setState({
-        data: undefined,
+      setState((current) => ({
+        data: current.data,
         isLoading: false,
         error: getErrorMessage(error, "Unable to load workspaces"),
-      });
+      }));
     }
   }, []);
 
@@ -72,23 +72,27 @@ export function useWorkspace(workspaceId: string | undefined) {
     isLoading: Boolean(workspaceId),
   });
 
+  useEffect(() => {
+    setState({ isLoading: Boolean(workspaceId) });
+  }, [workspaceId]);
+
   const refresh = useCallback(async () => {
     if (!workspaceId) {
       setState({ isLoading: false, error: "Missing workspace id" });
       return;
     }
 
-    setState((current) => ({ ...current, isLoading: true, error: undefined }));
+    setState((current) => ({ ...current, isLoading: !current.data, error: undefined }));
 
     try {
       const workspace = await api.workspaces.get(workspaceId);
       setState({ data: workspace, isLoading: false });
     } catch (error) {
-      setState({
-        data: undefined,
+      setState((current) => ({
+        data: current.data,
         isLoading: false,
         error: getErrorMessage(error, "Unable to load workspace"),
-      });
+      }));
     }
   }, [workspaceId]);
 

@@ -854,7 +854,7 @@ export function RepoPage() {
               <TabsContent value="ai-readme" className="min-h-[36rem] rounded-lg border border-border bg-background">
                 <AiReadmeViewer
                   readme={aiReadme}
-                  isLoading={isAiLoading || (!aiReadme && isExtractionInFlight)}
+                  isLoading={!aiReadme && (isAiLoading || isExtractionInFlight)}
                   error={aiError}
                   onRetry={() => void loadAiReadme()}
                   progress={analysisProgress}
@@ -864,7 +864,7 @@ export function RepoPage() {
               <TabsContent value="functions" className="min-h-[36rem] rounded-lg border border-border bg-background">
                 <FunctionsViewer
                   extraction={extraction}
-                  isLoading={isAiLoading || (!extraction && isExtractionInFlight)}
+                  isLoading={!extraction && (isAiLoading || isExtractionInFlight)}
                   error={aiError}
                   repoName={repo?.name}
                   onRetry={() => void loadExtraction()}
@@ -878,7 +878,7 @@ export function RepoPage() {
                   runnability={effectiveRunnability}
                   runtimeEvents={snapshot.securityEvents}
                   runtimeSecurity={security?.runtimeSecurity}
-                  isLoading={isAiLoading || isSecurityLoading || (!extraction?.security && isExtractionInFlight)}
+                  isLoading={!extraction?.security && (isAiLoading || isSecurityLoading || isExtractionInFlight)}
                   error={aiError ?? securityError}
                   onRetry={repoId ? () => void api.ai.extractStored(repoId).then(() => {
                     void refresh();

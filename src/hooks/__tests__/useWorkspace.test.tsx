@@ -142,4 +142,38 @@ describe("useWorkspace", () => {
     expect(result.current.repos[0]?.status).toBe("ready");
     expect(workspacesApi.get).toHaveBeenCalledTimes(2);
   });
+
+  it("keeps workspace content visible during active repo polling", async () => {
+    vi.useFakeTimers();
+    let resolveNextWorkspace: ((workspace: ReturnType<typeof makeWorkspace>) => void) | undefined;
+    workspacesApi.get
+      .mockResolvedValueOnce(makeWorkspace({ repos: [makeRepo({ status: "analyzing" })] }))
+      .mockImplementationOnce(() => new Promise<ReturnType<typeof makeWorkspace>>((resolve) => {
+        resolveNextWorkspace = resolve;
+      }));
+
+    const { result } = renderHook(() => useWorkspace("workspace-1"));
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.repos[0]?.status).toBe("analyzing");
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(3000);
+    });
+
+    expect(workspacesApi.get).toHaveBeenCalledTimes(2);
+    expect(result.current.isLoading).toBe(false);
+    expect(result.current.repos[0]?.status).toBe("analyzing");
+
+    await act(async () => {
+      resolveNextWorkspace?.(makeWorkspace({ repos: [makeRepo({ status: "ready" })] }));
+      await Promise.resolve();
+    });
+
+    expect(result.current.repos[0]?.status).toBe("ready");
+  });
 });
