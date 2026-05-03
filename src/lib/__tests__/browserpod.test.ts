@@ -271,6 +271,37 @@ describe("PodLifecycleManager repo preparation", () => {
     expect(snapshots.some((snapshot) => snapshot.terminal.some((line) => line.text.includes("git index")))).toBe(true);
     expect(snapshots.at(-1)?.fileTree?.children?.length).toBeGreaterThan(0);
   });
+
+  it("records clone timeout safety events", async () => {
+    vi.useFakeTimers();
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string) => {
+      if (command === "git") {
+        return new Promise(() => undefined);
+      }
+
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    void manager.cloneRepo("https://github.com/acme/frontend").catch(() => undefined);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(60_000);
+
+    expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "clone-timeout",
+        source: "browserpod",
+        phase: "clone",
+        category: "resource",
+        severity: "high",
+        title: "Clone timed out",
+      }),
+    ]));
+    vi.useRealTimers();
+  });
 });
 
 describe("PodLifecycleManager runnability", () => {
@@ -438,6 +469,62 @@ describe("PodLifecycleManager project lifecycle", () => {
     expect(pod.run).toHaveBeenCalledWith("sh", ["-lc", "npm test"], expect.objectContaining({ cwd: "/home/user/repo" }));
     expect(snapshots.at(-1)?.state).toBe("ready");
     expect(snapshots.at(-1)?.securityEvents).toBeUndefined();
+  });
+
+  it("copies runtime stdout and stderr into the snapshot output", async () => {
+    const kill = vi.fn().mockResolvedValue(undefined);
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[], options?: { terminal?: { xterm?: { write: (chunk: string) => void } } }) => {
+      if (command === "npm" && args[0] === "run") {
+        options?.terminal?.xterm?.write("server ready\n");
+        options?.terminal?.xterm?.write("warning: check config\n");
+        return { kill };
+      }
+
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("dev");
+
+    expect(snapshots.at(-1)?.terminal).toEqual(expect.arrayContaining([
+      expect.objectContaining({ stream: "stdout", text: "server ready" }),
+      expect.objectContaining({ stream: "stdout", text: "warning: check config" }),
+    ]));
+  });
+
+  it("records stop timeout safety events", async () => {
+    vi.useFakeTimers();
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "npm" && args[0] === "run") {
+        return { kill: vi.fn(() => new Promise(() => undefined)) };
+      }
+
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("dev");
+    void manager.stopProject().catch(() => undefined);
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(10_000);
+
+    expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        code: "stop-timeout",
+        source: "browserpod",
+        phase: "stop",
+        category: "process",
+        severity: "high",
+        title: "Sandbox stop timed out",
+      }),
+    ]));
+    vi.useRealTimers();
   });
 
   it("records a clear startup timeout event when no portal opens", async () => {

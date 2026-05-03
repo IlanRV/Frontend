@@ -3,12 +3,14 @@ import { describe, expect, it } from "vitest";
 import {
   getAutoPreviewCommand,
   getManualCommands,
+  isPreviewCommand,
   isAnalysisOnly,
   isManualOnly,
   normalizeRunnabilityBlockers,
   projectKindLabel,
   requiresSandboxConfirmation,
   runButtonLabel,
+  runtimeRunLabel,
   severityRank,
   supportLevelLabel,
   suspiciousLogEvent,
@@ -97,6 +99,37 @@ describe("security helpers", () => {
       runtimeProfile: makeRuntimeProfile({ supportLevel: "analysis-only", previewExpected: false, autoCommand: null }),
     }))).toBeUndefined();
     expect(getAutoPreviewCommand(makeRunnability({ entryPoint: "start" }))).toBe("start");
+  });
+
+  it("labels runtime actions by project kind and risk", () => {
+    expect(runtimeRunLabel(makeRunnability({
+      runtimeProfile: makeRuntimeProfile({ projectKind: "preview-app" }),
+    }))).toBe("Run preview in BrowserPod");
+    expect(runtimeRunLabel(makeRunnability({
+      runtimeProfile: makeRuntimeProfile({ projectKind: "api-server" }),
+    }))).toBe("Run API server in BrowserPod");
+    expect(runButtonLabel(makeSecurityScan({ riskLevel: "high" }), makeRunnability({
+      runtimeProfile: makeRuntimeProfile({ projectKind: "preview-app" }),
+    }))).toBe("Run in BrowserPod sandbox anyway");
+  });
+
+  it("recognizes commands expected to expose previews", () => {
+    const runnability = makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        supportLevel: "auto-preview",
+        previewExpected: true,
+        autoCommand: "npm run dev",
+        manualCommands: [
+          { command: "npm run docs", label: "Docs server", previewExpected: true, source: "package-script", confidence: "medium" },
+          { command: "npm test", label: "Tests", previewExpected: false, source: "package-script", confidence: "high" },
+        ],
+      }),
+    });
+
+    expect(isPreviewCommand(runnability, "npm run dev")).toBe(true);
+    expect(isPreviewCommand(runnability, "npm run docs")).toBe(true);
+    expect(isPreviewCommand(runnability, "npm test")).toBe(false);
   });
 
   it("deduplicates manual commands and labels profile states", () => {

@@ -223,6 +223,48 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("Analysis only")).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Run npm test in BrowserPod" })).not.toBeInTheDocument();
   });
+
+  it("shows manual command status, output, and stop controls", async () => {
+    const onStopManualCommand = vi.fn();
+    render(<RuntimeProfileCard
+      runnability={makeRunnability({
+        canRun: false,
+        runtimeProfile: makeRuntimeProfile({
+          projectKind: "test-only",
+          supportLevel: "manual-only",
+          previewExpected: false,
+          autoCommand: null,
+          manualCommands: [{ command: "npm test", label: "Run tests", description: "Run the unit suite", source: "package-script", confidence: "high" }],
+        }),
+      })}
+      commandRuns={{
+        "npm test": {
+          command: "npm test",
+          label: "Run tests",
+          status: "running",
+          startedAt: "2026-05-03T00:00:00.000Z",
+        },
+      }}
+      terminalLines={[
+        { id: "line-old", stream: "stdout", text: "before", createdAt: "2026-05-02T23:59:59.000Z" },
+        { id: "line-out", stream: "stdout", text: "tests passed", createdAt: "2026-05-03T00:00:01.000Z" },
+        { id: "line-err", stream: "stderr", text: "warning output", createdAt: "2026-05-03T00:00:02.000Z" },
+      ]}
+      onStopManualCommand={onStopManualCommand}
+      onRunManualCommand={vi.fn()}
+    />);
+
+    expect(screen.getByText("This repo is mostly tests or fixtures, so DevHub will not auto-start a preview.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run Run tests in BrowserPod" })).toBeDisabled();
+    expect(screen.getByText("Status: running")).toBeInTheDocument();
+    expect(screen.getByText("tests passed")).toBeInTheDocument();
+    expect(screen.getByText("warning output")).toBeInTheDocument();
+    expect(screen.queryByText("before")).not.toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop Run tests" }));
+
+    expect(onStopManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test" }));
+  });
 });
 
 describe("repo controls", () => {
