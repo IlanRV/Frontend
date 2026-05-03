@@ -315,7 +315,7 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("Alternate sandbox runs")).toBeInTheDocument();
     expect(screen.getByText("readme")).toBeInTheDocument();
     expect(screen.getByText("ai")).toBeInTheDocument();
-    expect(screen.getByText("opens preview")).toBeInTheDocument();
+    expect(screen.getAllByText("opens preview").length).toBeGreaterThan(0);
     expect(screen.getByText("console-only")).toBeInTheDocument();
   });
 
@@ -417,7 +417,7 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("Waiting for sandbox output. Full output also appears in Console.")).toBeInTheDocument();
   });
 
-  it("collapses runtime reasoning and evidence by default", () => {
+  it("collapses runtime reasoning and evidence by default", async () => {
     render(<RuntimeProfileCard runnability={makeRunnability({
       runtimeProfile: makeRuntimeProfile({
         reasoning: "Detailed runtime reasoning",

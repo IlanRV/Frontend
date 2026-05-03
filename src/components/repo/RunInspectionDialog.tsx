@@ -25,6 +25,7 @@ interface RunInspectionDialogProps {
   previewPaths?: string[];
   riskLevel?: SecurityScan["riskLevel"];
   command?: string;
+  previewExpected?: boolean;
   projectKind?: RepoProjectKind;
   runtimeEventCount?: number;
   isStopping?: boolean;
@@ -59,6 +60,7 @@ export function RunInspectionDialog({
   previewPaths,
   riskLevel,
   command,
+  previewExpected,
   projectKind,
   runtimeEventCount = 0,
   isStopping,
@@ -69,6 +71,7 @@ export function RunInspectionDialog({
   const [isQrVisible, setIsQrVisible] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | undefined>();
   const iframeUrl = portalUrl ? appendPortalPath(portalUrl, path) : undefined;
+  const runModeLabel = iframeUrl || previewExpected ? "Preview expected" : "Console-only run";
   const isHighRisk = riskLevel === "critical" || riskLevel === "high";
   const suggestions = useMemo(() => {
     const detected = previewPaths ?? [];
@@ -112,27 +115,38 @@ export function RunInspectionDialog({
       <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[86rem] overflow-hidden p-0 sm:w-[calc(100vw-2rem)]">
         <DialogHeader>
           <div className="border-b border-border px-4 py-3 sm:px-5">
-            <DialogTitle className="flex items-center gap-2">
-              <ShieldAlert className="h-5 w-5 text-cyan-600 dark:text-cyan-300" />
-              Run inspector
-            </DialogTitle>
-            <DialogDescription className="mt-1">
-              {portalUrl ? "Inspect the BrowserPod preview and sandbox console together." : "Watch sandbox output while the command runs."}
-            </DialogDescription>
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+              <div>
+                <DialogTitle className="flex items-center gap-2">
+                  <ShieldAlert className="h-5 w-5 text-cyan-600 dark:text-cyan-300" />
+                  Run inspector
+                </DialogTitle>
+                <DialogDescription className="mt-1">
+                  {portalUrl ? "Inspect the BrowserPod preview and sandbox console together." : "Watch sandbox output while the command runs."}
+                </DialogDescription>
+              </div>
+              <div className="flex flex-wrap items-center gap-2 text-xs">
+                <Badge variant={runModeLabel === "Preview expected" ? "info" : "secondary"}>{runModeLabel}</Badge>
+                {projectKind && <Badge variant="outline">{projectKindLabel(projectKind)}</Badge>}
+                {runtimeEventCount > 0 && <Badge variant="warning">{runtimeEventCount} runtime alert(s)</Badge>}
+                {isHighRisk && <Badge variant="danger">High-risk repo</Badge>}
+              </div>
+            </div>
+            <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">Current command</p>
+              <p className="mt-1 break-words font-mono text-xs text-foreground">{command ?? "Waiting for BrowserPod command"}</p>
+            </div>
           </div>
         </DialogHeader>
 
-        <div className="grid max-h-[calc(92vh-5rem)] min-h-[32rem] overflow-hidden lg:grid-cols-[minmax(0,1fr)_minmax(20rem,28rem)]">
-          <section className="min-h-0 overflow-hidden border-b border-border lg:border-b-0 lg:border-r" aria-label="BrowserPod preview">
+        <div className="flex max-h-[calc(92vh-7rem)] min-h-[32rem] flex-col overflow-hidden">
+          <section className="min-h-0 border-b border-border" aria-label="BrowserPod preview">
             {iframeUrl ? (
-              <div className="flex h-full min-h-[22rem] flex-col bg-background">
+              <div className="flex max-h-[58vh] min-h-[20rem] flex-col bg-background">
                 <div className="space-y-3 border-b border-border p-3 text-sm">
                   <div className="flex flex-wrap items-center gap-2">
                     <Badge variant="outline">Sandboxed by BrowserPod</Badge>
-                    {projectKind && <Badge variant="secondary">{projectKindLabel(projectKind)}</Badge>}
-                    {command && <Badge variant="outline">{command}</Badge>}
-                    {runtimeEventCount > 0 && <Badge variant="warning">{runtimeEventCount} runtime alert(s)</Badge>}
-                    {isHighRisk && <Badge variant="danger">High-risk repo</Badge>}
+                    <Badge variant="info">Live preview</Badge>
                   </div>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
@@ -192,22 +206,22 @@ export function RunInspectionDialog({
                     </div>
                   )}
                 </div>
-                <iframe title="BrowserPod live preview" src={iframeUrl} className="min-h-[22rem] flex-1 bg-white" />
+                <iframe title="BrowserPod live preview" src={iframeUrl} className="min-h-[18rem] flex-1 bg-white" />
               </div>
             ) : (
-              <div className="flex h-full min-h-[22rem] items-center justify-center bg-muted/30 p-6 text-center text-sm text-muted-foreground">
+              <div className="flex min-h-[12rem] items-center justify-center bg-muted/30 p-6 text-center text-sm text-muted-foreground">
                 <div>
-                  <p className="font-medium text-foreground">Console-only command</p>
-                  <p className="mt-2 max-w-sm">No BrowserPod portal has opened yet. Watch the command output while the sandbox runs.</p>
+                  <p className="font-medium text-foreground">No live preview yet</p>
+                  <p className="mt-2 max-w-sm">This run may be console-only, or BrowserPod may still be waiting for the app to expose a portal.</p>
                 </div>
               </div>
             )}
           </section>
 
-          <section className="flex min-h-0 flex-col" aria-label="Sandbox console">
+          <section className="flex min-h-0 flex-1 flex-col" aria-label="Sandbox console">
             <div className="border-b border-border p-3">
-              <h3 className="text-sm font-semibold">Console</h3>
-              <p className="mt-1 text-xs text-muted-foreground">Live BrowserPod output for this run.</p>
+              <h3 className="text-sm font-semibold">BrowserPod terminal</h3>
+              <p className="mt-1 text-xs text-muted-foreground">Live output for the selected run path.</p>
             </div>
             <div className="min-h-[18rem] flex-1 overflow-auto bg-black p-3 font-mono text-xs text-zinc-100">
               {terminalLines.length > 0 ? terminalLines.map((line) => (

@@ -567,7 +567,7 @@ describe("RepoPage", () => {
     await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
 
     expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
-    expect(screen.getByText("server warming")).toBeInTheDocument();
+    expect(screen.getAllByText("server warming").length).toBeGreaterThan(0);
   });
 
   it("disables run and shows blocker details when backend says the repo is not runnable", async () => {
@@ -815,7 +815,7 @@ describe("RepoPage", () => {
     expect(screen.getByTestId("functions-viewer")).toHaveTextContent("frontend functions");
 
     expect(screen.queryByRole("tab", { name: "Live Preview" })).not.toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Inspector" }));
+    await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
     expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
   });

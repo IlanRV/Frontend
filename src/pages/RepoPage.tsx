@@ -165,6 +165,7 @@ export function RepoPage() {
   const [isRunInspectorOpen, setIsRunInspectorOpen] = useState(false);
   const [isSecurityConfirmOpen, setIsSecurityConfirmOpen] = useState(false);
   const [lastRunCommand, setLastRunCommand] = useState<string | undefined>();
+  const [lastRunPreviewExpected, setLastRunPreviewExpected] = useState<boolean | undefined>();
   const [manualCommandRuns, setManualCommandRuns] = useState<Record<string, SandboxCommandRun>>({});
   const [bootAttempt, setBootAttempt] = useState(0);
   const bootedRepoRef = useRef<string | undefined>();
@@ -194,6 +195,7 @@ export function RepoPage() {
     setIsRunActionPending(false);
     setIsRunInspectorOpen(false);
     setLastRunCommand(undefined);
+    setLastRunPreviewExpected(undefined);
     setManualCommandRuns({});
     autoRunRef.current = false;
     registeredPortalRef.current = undefined;
@@ -292,8 +294,11 @@ export function RepoPage() {
         return false;
       }
 
-      await runProject(runCommand, { previewExpected });
       setLastRunCommand(runCommand);
+      setLastRunPreviewExpected(previewExpected);
+      setIsRunInspectorOpen(true);
+      setIsConsoleOpen(true);
+      await runProject(runCommand, { previewExpected });
       if (previewExpected && snapshot.portalUrl && registeredPortalRef.current !== snapshot.portalUrl) {
         registeredPortalRef.current = snapshot.portalUrl;
         await registerRun(snapshot.portalUrl, pendingRunOptionsRef.current);
@@ -301,8 +306,6 @@ export function RepoPage() {
       if (previewExpected && repo?.id) {
         setStoredRunIntent(repo.id, true);
       }
-      setIsRunInspectorOpen(true);
-      setIsConsoleOpen(true);
       toast.success(previewExpected ? "Project starting in BrowserPod" : "Sandbox command started in BrowserPod");
         return true;
     } catch (runError) {
@@ -341,6 +344,13 @@ export function RepoPage() {
   const handleManualCommand = useCallback((command: RuntimeCommandSuggestion) => {
     const startedAt = new Date().toISOString();
     const previewExpected = command.previewExpected ?? false;
+
+    if (!requiresSandboxConfirmation(effectiveSecurity)) {
+      setLastRunCommand(command.command);
+      setLastRunPreviewExpected(previewExpected);
+      setIsRunInspectorOpen(true);
+      setIsConsoleOpen(true);
+    }
 
     setManualCommandRuns((current) => ({
       ...current,
@@ -482,6 +492,7 @@ export function RepoPage() {
               }
 
               setLastRunCommand(command);
+              setLastRunPreviewExpected(true);
               return runProject(command, { previewExpected: true })
               .then(() => {
                 setStoredRunIntent(repo.id, true);
@@ -736,7 +747,7 @@ export function RepoPage() {
           )}
           {(portalUrl || lastRunCommand || snapshot.terminal.length > 0) && (
             <Button variant="outline" size="sm" onClick={() => setIsRunInspectorOpen(true)}>
-              Inspector
+              View run inspector
             </Button>
           )}
           <Button variant="outline" size="sm" onClick={() => setActiveTab("ai-readme")}>
@@ -772,8 +783,12 @@ export function RepoPage() {
         <RuntimeProfileCard
           runnability={effectiveRunnability}
           isBusy={isBusy}
+          isRunning={isRunning}
+          hasInspector={isRunning || Boolean(portalUrl || lastRunCommand || snapshot.terminal.length > 0)}
+          activeCommand={lastRunCommand ?? autoPreviewCommand}
           commandRuns={manualCommandRuns}
           terminalLines={snapshot.terminal}
+          onOpenInspector={() => setIsRunInspectorOpen(true)}
           onRunAuto={handleAutoCommand}
           onRunManualCommand={handleManualCommand}
           onStopManualCommand={handleStopManualCommand}
@@ -919,6 +934,7 @@ export function RepoPage() {
         previewPaths={effectiveRunnability?.previewPaths}
         riskLevel={effectiveSecurity?.riskLevel}
         command={lastRunCommand ?? autoPreviewCommand}
+        previewExpected={lastRunPreviewExpected ?? Boolean(portalUrl)}
         projectKind={effectiveRunnability?.runtimeProfile?.projectKind}
         runtimeEventCount={(snapshot.securityEvents?.length ?? 0) + (security?.runtimeSecurity.eventCount ?? 0)}
         isStopping={isBusy}
