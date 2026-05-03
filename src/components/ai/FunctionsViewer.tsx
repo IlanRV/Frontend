@@ -1,6 +1,8 @@
 import {
   AlertCircle,
   Braces,
+  ChevronDown,
+  ChevronRight,
   FileCode2,
   ListChecks,
   Package,
@@ -43,7 +45,19 @@ function searchableText(functionDoc: FunctionDoc) {
     .toLowerCase();
 }
 
-function FunctionCard({ functionDoc }: { functionDoc: FunctionDoc }) {
+function functionDocKey(functionDoc: FunctionDoc) {
+  return `${functionDoc.file}:${functionDoc.line}:${functionDoc.name}:${functionDoc.signature}`;
+}
+
+function FunctionCard({
+  functionDoc,
+  isExpanded,
+  onToggle,
+}: {
+  functionDoc: FunctionDoc;
+  isExpanded: boolean;
+  onToggle: () => void;
+}) {
   const hasDetails =
     functionDoc.params.length > 0 ||
     functionDoc.dependencies.length > 0 ||
@@ -52,32 +66,43 @@ function FunctionCard({ functionDoc }: { functionDoc: FunctionDoc }) {
 
   return (
     <Card className="overflow-hidden shadow-none">
-      <CardHeader className="gap-3 border-b border-border bg-muted/25 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div className="min-w-0">
-            <div className="flex min-w-0 items-center gap-2">
-              <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300">
-                <Braces className="h-4 w-4" />
+      <CardHeader className="border-b border-border bg-muted/25 p-0">
+        <button
+          type="button"
+          className="w-full p-4 text-left transition-colors hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+          onClick={onToggle}
+          aria-expanded={isExpanded}
+        >
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex min-w-0 items-center gap-2">
+                <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-100 text-cyan-700 dark:bg-cyan-950 dark:text-cyan-300">
+                  <Braces className="h-4 w-4" />
+                </div>
+                <CardTitle className="truncate text-base leading-6">{functionDoc.name}</CardTitle>
               </div>
-              <CardTitle className="truncate text-base leading-6">{functionDoc.name}</CardTitle>
+              <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
+                <span className="inline-flex min-w-0 items-center gap-1">
+                  <FileCode2 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="break-all">{functionDoc.file}</span>
+                </span>
+                <span>Line {functionDoc.line}</span>
+              </div>
             </div>
-            <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-xs text-muted-foreground">
-              <span className="inline-flex min-w-0 items-center gap-1">
-                <FileCode2 className="h-3.5 w-3.5 shrink-0" />
-                <span className="break-all">{functionDoc.file}</span>
-              </span>
-              <span>Line {functionDoc.line}</span>
+            <div className="flex shrink-0 items-center gap-2">
+              <Badge variant={functionDoc.type === "class" ? "info" : "secondary"} className="w-fit capitalize">
+                {functionDoc.type}
+              </Badge>
+              {isExpanded ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
             </div>
           </div>
-          <Badge variant={functionDoc.type === "class" ? "info" : "secondary"} className="w-fit shrink-0 capitalize">
-            {functionDoc.type}
-          </Badge>
-        </div>
-        <code className="block overflow-x-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground">
-          {functionDoc.signature}
-        </code>
+          <code className="mt-3 block overflow-x-auto rounded-md border border-border bg-background px-3 py-2 font-mono text-xs text-foreground">
+            {functionDoc.signature}
+          </code>
+          <p className="mt-3 line-clamp-2 text-sm leading-6 text-muted-foreground">{functionDoc.description}</p>
+        </button>
       </CardHeader>
-      <CardContent className="space-y-4 p-4">
+      {isExpanded && <CardContent className="space-y-4 p-4">
         <p className="text-sm leading-6 text-muted-foreground">{functionDoc.description}</p>
 
         {hasDetails && (
@@ -153,13 +178,14 @@ function FunctionCard({ functionDoc }: { functionDoc: FunctionDoc }) {
             </div>
           </div>
         )}
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
 
 export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetry }: FunctionsViewerProps) {
   const [query, setQuery] = useState("");
+  const [expandedCards, setExpandedCards] = useState<Set<string>>(() => new Set());
   const functions = useMemo(() => extraction?.functions ?? [], [extraction?.functions]);
   const normalizedQuery = query.trim().toLowerCase();
   const filteredFunctions = useMemo(
@@ -170,6 +196,21 @@ export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetr
     [functions, normalizedQuery],
   );
   const dependencyCount = Object.keys(extraction?.dependencies ?? {}).length;
+
+  function toggleFunction(functionDoc: FunctionDoc) {
+    const key = functionDocKey(functionDoc);
+    setExpandedCards((current) => {
+      const next = new Set(current);
+
+      if (next.has(key)) {
+        next.delete(key);
+      } else {
+        next.add(key);
+      }
+
+      return next;
+    });
+  }
 
   if (isLoading) {
     return (
@@ -292,8 +333,10 @@ export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetr
         <div className={cn("grid gap-4", filteredFunctions.length > 1 && "xl:grid-cols-2")}>
           {filteredFunctions.map((functionDoc) => (
             <FunctionCard
-              key={`${functionDoc.file}:${functionDoc.line}:${functionDoc.name}:${functionDoc.signature}`}
+              key={functionDocKey(functionDoc)}
               functionDoc={functionDoc}
+              isExpanded={expandedCards.has(functionDocKey(functionDoc))}
+              onToggle={() => toggleFunction(functionDoc)}
             />
           ))}
         </div>

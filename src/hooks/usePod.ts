@@ -112,6 +112,14 @@ export function usePod(repoId: string | undefined) {
     [boot, getManager],
   );
 
+  const bootstrapRepoFiles = useCallback(
+    async (repoUrl: string): Promise<FileTreeNode> => {
+      await boot();
+      return getManager().cloneRepoFiles(repoUrl);
+    },
+    [boot, getManager],
+  );
+
   const readFile = useCallback(
     async (path: string) => {
       return getManager().readRepoFile(path);
@@ -169,6 +177,7 @@ export function usePod(repoId: string | undefined) {
     snapshot,
     boot,
     bootstrapRepo,
+    bootstrapRepoFiles,
     readFile,
     refreshFileTree,
     checkRunnability,
@@ -177,4 +186,15 @@ export function usePod(repoId: string | undefined) {
     stopProject,
     terminate,
   };
+}
+
+export async function stopRegisteredPod(repoId: string) {
+  const entry = podRegistry.get(repoId);
+
+  if (!entry) {
+    return;
+  }
+
+  cancelTerminate(entry);
+  await entry.manager.stopProject();
 }

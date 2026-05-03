@@ -29,6 +29,25 @@ function isLikelyGithubUrl(value: string) {
   return /^https:\/\/github\.com\/[^/\s]+\/[^/\s]+\/?$/.test(value);
 }
 
+const MODAL_STEP_TIMEOUT_MS = 120_000;
+
+async function withTimeout<T>(promise: Promise<T>, message: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((_, reject) => {
+        timeoutId = setTimeout(() => reject(new Error(message)), MODAL_STEP_TIMEOUT_MS);
+      }),
+    ]);
+  } finally {
+    if (timeoutId !== undefined) {
+      clearTimeout(timeoutId);
+    }
+  }
+}
+
 export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoModalProps) {
   const [githubUrl, setGithubUrl] = useState("");
   const [phase, setPhase] = useState<string | undefined>();
@@ -51,13 +70,22 @@ export function AddRepoModal({ open, onOpenChange, onAdd, onComplete }: AddRepoM
       setPhase("Creating repo record");
       repo = await onAdd(trimmedUrl);
 
-      setPhase("Booting BrowserPod and cloning repo");
-      const { fileTree } = await pod.bootstrapRepo(trimmedUrl);
+      setPhase("Booting BrowserPod and reading source tree");
+      const fileTree = await withTimeout(
+        pod.bootstrapRepoFiles(trimmedUrl),
+        "Timed out while preparing the repo source tree. Please retry the clone.",
+      );
       saveCachedFileTree(repo.id, fileTree);
 
       setPhase("Sending source context for AI extraction");
-      const payload = await pod.collectAiExtractionPayload(fileTree);
-      const extraction = await api.ai.extract(repo.id, payload);
+      const payload = await withTimeout(
+        pod.collectAiExtractionPayload(fileTree),
+        "Timed out while reading source files for extraction. Please retry the repo.",
+      );
+      const extraction = await withTimeout(
+        api.ai.extract(repo.id, payload),
+        "Timed out while starting the extraction job. Please retry from the repo page.",
+      );
 
       toast.success(extraction.cached ? "Repo added with cached AI extraction" : "Repo added and AI extraction started");
       setGithubUrl("");

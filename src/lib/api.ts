@@ -1,5 +1,6 @@
 import type {
   AddRepoPayload,
+  AnalysisProgress,
   AiReadme,
   ApiErrorShape,
   ChatHistoryResponse,
@@ -11,6 +12,9 @@ import type {
   ExtractionResponse,
   Repo,
   RepoFileResponse,
+  SecurityConfidence,
+  SecurityScan,
+  SecuritySeverity,
   Workspace,
 } from "@/types";
 import { isRecord } from "@/lib/utils";
@@ -19,6 +23,7 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:3001/api
   /\/$/,
   "",
 );
+const API_TIMEOUT_MS = 90_000;
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -82,6 +87,7 @@ function normalizeRepo(payload: unknown): Repo {
     ...(payload as unknown as Repo),
     id: repoId,
     repoId,
+    analysisProgress: normalizeAnalysisProgress(payload.analysisProgress),
   };
 }
 
@@ -116,6 +122,114 @@ function normalizeChatMessage(payload: unknown): ChatMessage {
     messageId,
     createdAt,
     timestamp: readString(payload, "timestamp") ?? createdAt,
+  };
+}
+
+function normalizeAnalysisProgress(payload: unknown): AnalysisProgress | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const phase = readString(payload, "phase");
+  const message = readString(payload, "message");
+  const updatedAt = readString(payload, "updatedAt");
+  const percent = typeof payload.percent === "number" ? payload.percent : Number(payload.percent);
+
+  if (!phase || !message || !updatedAt || !Number.isFinite(percent)) {
+    return null;
+  }
+
+  return {
+    phase: phase as AnalysisProgress["phase"],
+    percent: Math.max(0, Math.min(100, Math.round(percent))),
+    message,
+    updatedAt,
+  };
+}
+
+function normalizeSeverity(value: unknown): SecuritySeverity {
+  return value === "critical" || value === "high" || value === "medium" || value === "low" || value === "info"
+    ? value
+    : "info";
+}
+
+function normalizeConfidence(value: unknown): SecurityConfidence {
+  return value === "high" || value === "medium" || value === "low" ? value : "low";
+}
+
+function normalizeStringArray(value: unknown) {
+  return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
+}
+
+function normalizeSecurityScan(payload: unknown): SecurityScan | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const riskLevel = readString(payload, "riskLevel");
+  const normalizedRiskLevel =
+    riskLevel === "critical" || riskLevel === "high" || riskLevel === "medium" || riskLevel === "low" || riskLevel === "info" || riskLevel === "unknown"
+      ? riskLevel
+      : "unknown";
+
+  return {
+    riskLevel: normalizedRiskLevel,
+    summary: readString(payload, "summary") ?? "No security summary was returned.",
+    findings: Array.isArray(payload.findings)
+      ? payload.findings.filter(isRecord).map((finding) => ({
+          title: readString(finding, "title") ?? "Security finding",
+          severity: normalizeSeverity(finding.severity),
+          category: (readString(finding, "category") ?? "other") as SecurityScan["findings"][number]["category"],
+          file: readString(finding, "file") ?? "unknown",
+          line: typeof finding.line === "number" ? finding.line : null,
+          evidence: readString(finding, "evidence") ?? "No evidence returned.",
+          impact: readString(finding, "impact") ?? "Impact was not described.",
+          recommendation: readString(finding, "recommendation") ?? "Review manually.",
+          confidence: normalizeConfidence(finding.confidence),
+        }))
+      : [],
+    dependencyRisks: Array.isArray(payload.dependencyRisks)
+      ? payload.dependencyRisks.filter(isRecord).map((risk) => ({
+          packageName: readString(risk, "packageName") ?? "unknown",
+          version: readString(risk, "version") ?? null,
+          severity: normalizeSeverity(risk.severity),
+          risk: readString(risk, "risk") ?? "Dependency risk",
+          reason: readString(risk, "reason") ?? "No reason returned.",
+          recommendation: readString(risk, "recommendation") ?? "Review manually.",
+          confidence: normalizeConfidence(risk.confidence),
+        }))
+      : [],
+    scannedFiles: normalizeStringArray(payload.scannedFiles),
+    notes: normalizeStringArray(payload.notes),
+  };
+}
+
+function createFetchTimeout(parentSignal?: AbortSignal) {
+  const controller = new AbortController();
+  let didTimeout = false;
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+
+  const abortFromParent = () => controller.abort(parentSignal?.reason);
+
+  if (parentSignal?.aborted) {
+    abortFromParent();
+  } else {
+    parentSignal?.addEventListener("abort", abortFromParent, { once: true });
+    timeoutId = setTimeout(() => {
+      didTimeout = true;
+      controller.abort();
+    }, API_TIMEOUT_MS);
+  }
+
+  return {
+    signal: controller.signal,
+    didTimeout: () => didTimeout,
+    clear: () => {
+      if (timeoutId !== undefined) {
+        clearTimeout(timeoutId);
+      }
+      parentSignal?.removeEventListener("abort", abortFromParent);
+    },
   };
 }
 
@@ -161,6 +275,7 @@ function normalizeExtractionResponse(payload: unknown): ExtractionResponse {
     overview: isRecord(payload.overview) ? (payload.overview as unknown as ExtractionResponse["overview"]) : null,
     functions: Array.isArray(payload.functions) ? (payload.functions as ExtractionResponse["functions"]) : [],
     dependencies: isRecord(payload.dependencies) ? (payload.dependencies as Record<string, string>) : {},
+    security: normalizeSecurityScan(payload.security),
     aiReadme: typeof payload.aiReadme === "string" && payload.aiReadme.trim().length > 0 ? payload.aiReadme : null,
     runnability: isRecord(payload.runnability)
       ? (payload.runnability as unknown as ExtractionResponse["runnability"])
@@ -168,6 +283,7 @@ function normalizeExtractionResponse(payload: unknown): ExtractionResponse {
     analysisUpdatedAt: readString(payload, "analysisUpdatedAt") ?? null,
     analysisModel: readString(payload, "analysisModel") ?? null,
     analysisError: readString(payload, "analysisError") ?? null,
+    analysisProgress: normalizeAnalysisProgress(payload.analysisProgress),
     cached: typeof payload.cached === "boolean" ? payload.cached : undefined,
     deduped: typeof payload.deduped === "boolean" ? payload.deduped : undefined,
   };
@@ -188,29 +304,42 @@ function getErrorMessage(payload: unknown, fallback: string) {
 
 export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): Promise<T> {
   const headers = new Headers(options.headers);
+  const timeout = createFetchTimeout(options.signal ?? undefined);
 
   if (options.json !== undefined) {
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(resolvePath(path), {
-    ...options,
-    method: options.method ?? "GET",
-    headers,
-    body: options.json === undefined ? undefined : JSON.stringify(options.json),
-  });
+  try {
+    const response = await fetch(resolvePath(path), {
+      ...options,
+      method: options.method ?? "GET",
+      cache: options.cache ?? "no-store",
+      headers,
+      signal: timeout.signal,
+      body: options.json === undefined ? undefined : JSON.stringify(options.json),
+    });
 
-  const payload = await parseResponse(response);
+    const payload = await parseResponse(response);
 
-  if (!response.ok) {
-    throw new ApiError(
-      getErrorMessage(payload, `Request failed with status ${response.status}`),
-      response.status,
-      payload,
-    );
+    if (!response.ok) {
+      throw new ApiError(
+        getErrorMessage(payload, `Request failed with status ${response.status}`),
+        response.status,
+        payload,
+      );
+    }
+
+    return unwrapData<T>(payload);
+  } catch (error) {
+    if (timeout.didTimeout()) {
+      throw new ApiError("Request timed out. Please retry once the current operation has settled.", 408);
+    }
+
+    throw error;
+  } finally {
+    timeout.clear();
   }
-
-  return unwrapData<T>(payload);
 }
 
 export function normalizeChatMessages(response: ChatHistoryResponse | ChatMessage[]) {
@@ -251,6 +380,11 @@ export const api = {
       apiFetch<ExtractAiResponse>(`/ai/extract/${repoId}`, {
         method: "POST",
         json: payload,
+      }),
+    extractStored: (repoId: string) =>
+      apiFetch<ExtractAiResponse>(`/ai/extract/${repoId}`, {
+        method: "POST",
+        json: { useStoredFiles: true },
       }),
     getExtraction: (repoId: string) =>
       apiFetch<unknown>(`/ai/extract/${repoId}`).then(normalizeExtractionResponse),

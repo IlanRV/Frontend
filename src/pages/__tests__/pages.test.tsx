@@ -128,6 +128,7 @@ function podHook(overrides: Partial<ReturnType<typeof usePod>> = {}) {
     },
     boot: vi.fn(),
     bootstrapRepo: vi.fn().mockResolvedValue({ fileTree: makeFileTree(), runnability: makeRunnability() }),
+    bootstrapRepoFiles: vi.fn().mockResolvedValue(makeFileTree()),
     readFile: vi.fn().mockResolvedValue("# Readme"),
     refreshFileTree: vi.fn(),
     checkRunnability: vi.fn(),
@@ -453,7 +454,7 @@ describe("RepoPage", () => {
   });
 
   it("shows bootstrap errors and retries repo refresh", async () => {
-    const bootstrapRepo = vi.fn().mockRejectedValue(new Error("boot failed"));
+    const bootstrapRepoFiles = vi.fn().mockRejectedValue(new Error("boot failed"));
     const refresh = vi.fn();
     mockedUseRepo.mockReturnValue(repoHook({
       repo: makeRepo({ status: "cloning", fileTree: null, analysis: null, aiReadme: null }),
@@ -462,7 +463,7 @@ describe("RepoPage", () => {
     mockedUsePod.mockReturnValue({
       ...podHook(),
       snapshot: { repoId: "repo-1", state: "idle", terminal: [] },
-      bootstrapRepo,
+      bootstrapRepoFiles,
     });
 
     renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);

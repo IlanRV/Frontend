@@ -28,6 +28,7 @@ function normalizeExtraction(value: unknown): ExtractionResponse | undefined {
     overview: isRecord(value.overview) ? (value.overview as unknown as ExtractionResponse["overview"]) : null,
     functions: Array.isArray(value.functions) ? (value.functions as ExtractionResponse["functions"]) : [],
     dependencies: isRecord(value.dependencies) ? (value.dependencies as Record<string, string>) : {},
+    security: isRecord(value.security) ? (value.security as unknown as ExtractionResponse["security"]) : null,
     aiReadme: typeof value.aiReadme === "string" && value.aiReadme.trim().length > 0 ? value.aiReadme : null,
     runnability: isRecord(value.runnability)
       ? (value.runnability as unknown as ExtractionResponse["runnability"])

@@ -28,6 +28,10 @@ const SUPPORTED_EXTENSIONS = [
   ".py",
   ".yml",
   ".yaml",
+  ".txt",
+  ".lock",
+  ".sh",
+  ".bash",
   ".env",
   ".gitignore",
 ] satisfies SupportedExtension[];
@@ -64,6 +68,7 @@ const IGNORED_DIRECTORIES = [
 
 const MAX_AI_FILES = 100;
 const MAX_AI_FILE_BYTES = 250_000;
+const MAX_BATCH_READ_FILES = 20;
 const MAX_ROUTE_SCAN_FILES = 40;
 const MAX_ROUTE_SCAN_FILE_BYTES = 200_000;
 const REPO_ROOT = "/home/user/repo";
@@ -121,6 +126,12 @@ type TerminablePod = BrowserPod & {
 type BrowserPodBootOptions = Parameters<typeof BrowserPod.boot>[0] & {
   storageKey?: string;
 };
+
+interface ReadRepoFileResult {
+  path: string;
+  content?: string;
+  error?: string;
+}
 
 export function createInitialPodSnapshot(repoId: string): PodSnapshot {
   return {
@@ -517,6 +528,55 @@ try {
 `;
 }
 
+function buildReadTextFilesScript(rootPath: string, inputPaths: string[], markerId: string) {
+  return `
+const fs = require("fs");
+const path = require("path");
+
+const root = ${JSON.stringify(rootPath)};
+const inputPaths = ${JSON.stringify(inputPaths)};
+const beginMarker = "__DEVHUB_BEGIN_${markerId}__";
+const endMarker = "__DEVHUB_END_${markerId}__";
+
+function emitPayload(value) {
+  const base64 = Buffer.from(value, "utf-8").toString("base64");
+
+  console.log(beginMarker);
+  for (let index = 0; index < base64.length; index += 16000) {
+    console.log(base64.slice(index, index + 16000));
+  }
+  console.log(endMarker);
+}
+
+function safeResolve(relativePath) {
+  const normalized = relativePath.replace(/^\\/+/, "");
+  const resolved = path.resolve(root, normalized);
+
+  if (resolved !== root && !resolved.startsWith(root + path.sep)) {
+    throw new Error("Refusing to read outside repo root: " + relativePath);
+  }
+
+  return resolved;
+}
+
+const results = inputPaths.map((inputPath) => {
+  try {
+    return {
+      path: inputPath,
+      content: fs.readFileSync(safeResolve(inputPath), "utf-8")
+    };
+  } catch (error) {
+    return {
+      path: inputPath,
+      error: error && error.message ? error.message : String(error)
+    };
+  }
+});
+
+emitPayload(JSON.stringify(results));
+`;
+}
+
 function commandPreview(command: string, args: string[]) {
   const value = [command, ...args].join(" ");
   return value.length > 240 ? `${value.slice(0, 240)}...` : value;
@@ -788,6 +848,18 @@ export class PodLifecycleManager {
       };
     }
 
+    const fileTree = await this.cloneRepoFiles(repoUrl);
+    const runnability = this.snapshot.runnability ?? (await this.checkRunnability());
+    this.emit({ state: "ready", fileTree, runnability });
+    return { fileTree, runnability };
+  }
+
+  async cloneRepoFiles(repoUrl: string) {
+    if (this.clonedRepoUrl === repoUrl && this.snapshot.fileTree) {
+      this.emit({ state: this.snapshot.state === "error" ? "ready" : this.snapshot.state, error: undefined });
+      return this.snapshot.fileTree;
+    }
+
     this.emit({ state: "cloning", error: undefined, fileTree: undefined });
     this.log(`Cloning ${repoUrl}`);
 
@@ -797,9 +869,8 @@ export class PodLifecycleManager {
       await this.runCommand("git", ["clone", "--depth", "1", repoUrl, REPO_ROOT]);
       this.clonedRepoUrl = repoUrl;
       const fileTree = await this.refreshFileTreeWithRetries();
-      const runnability = await this.checkRunnability();
-      this.emit({ state: "ready", fileTree, runnability });
-      return { fileTree, runnability };
+      this.emit({ state: "ready", fileTree, runnability: undefined });
+      return fileTree;
     } catch (error) {
       console.error("[BrowserPod] cloneRepo failed:", error);
       const message = error instanceof Error ? error.message : "Repo clone failed";
@@ -867,6 +938,48 @@ export class PodLifecycleManager {
   async readRepoFile(path: string) {
     const normalized = path.replace(/^\/+/, "");
     return this.readRuntimeTextFile(`${REPO_ROOT}/${normalized}`);
+  }
+
+  async readRepoFiles(paths: string[]) {
+    const normalizedPaths = [...new Set(paths.map((path) => path.replace(/^\/+/, "")).filter(Boolean))];
+
+    if (normalizedPaths.length === 0) {
+      return [];
+    }
+
+    const hydratedFiles: Array<{ path: string; content: string }> = [];
+
+    for (let index = 0; index < normalizedPaths.length; index += MAX_BATCH_READ_FILES) {
+      const batch = normalizedPaths.slice(index, index + MAX_BATCH_READ_FILES);
+      const markerId = crypto.randomUUID();
+      const output = await this.runNodeScriptWithOutput(
+        buildReadTextFilesScript(REPO_ROOT, batch, markerId),
+        { cwd: REPO_ROOT, echo: false },
+      );
+      const parsed = JSON.parse(extractMarkedPayload(output, markerId)) as unknown;
+
+      if (!Array.isArray(parsed)) {
+        throw new Error("BrowserPod returned an invalid batch file payload");
+      }
+
+      hydratedFiles.push(
+        ...parsed.flatMap((item): Array<{ path: string; content: string }> => {
+          const result = item as ReadRepoFileResult;
+
+          if (typeof result.path === "string" && typeof result.content === "string") {
+            return [{ path: result.path, content: result.content }];
+          }
+
+          if (typeof result.path === "string" && result.error) {
+            console.warn("[BrowserPod] batch file read skipped", { path: result.path, error: result.error });
+          }
+
+          return [];
+        }),
+      );
+    }
+
+    return hydratedFiles;
   }
 
   private async loadFileTreeFromScript(script: string, markerId: string) {
@@ -998,13 +1111,7 @@ export class PodLifecycleManager {
     const files = flattenSupportedFiles(fileTree)
       .filter((file) => (file.size ?? 0) <= MAX_AI_FILE_BYTES)
       .slice(0, MAX_AI_FILES);
-
-    const hydratedFiles = await Promise.all(
-      files.map(async (file) => ({
-        path: file.path,
-        content: await this.readRepoFile(file.path),
-      })),
-    );
+    const hydratedFiles = await this.readRepoFiles(files.map((file) => file.path));
 
     return {
       fileTree,
@@ -1022,15 +1129,9 @@ export class PodLifecycleManager {
     const candidates = flattenSupportedFiles(fileTree)
       .filter(isRouteScanCandidate)
       .slice(0, MAX_ROUTE_SCAN_FILES);
-    const detected: string[] = [];
-
-    for (const file of candidates) {
-      try {
-        detected.push(...detectRoutePaths(await this.readRepoFile(file.path)));
-      } catch {
-        // Route suggestions are best effort; file viewing and running do not depend on them.
-      }
-    }
+    const detected = (await this.readRepoFiles(candidates.map((file) => file.path))).flatMap((file) =>
+      detectRoutePaths(file.content),
+    );
 
     return uniquePreviewPaths(detected);
   }

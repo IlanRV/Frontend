@@ -43,11 +43,13 @@ function extractionFromRepo(repo: Repo): ExtractionResponse | undefined {
     overview: repo.analysis?.overview ?? null,
     functions: repo.analysis?.functions ?? [],
     dependencies: repo.analysis?.dependencies ?? {},
+    security: repo.analysis?.security ?? null,
     aiReadme: repo.aiReadme ?? null,
     runnability: repo.runnability ?? null,
     analysisUpdatedAt: repo.analysisUpdatedAt ?? null,
     analysisModel: repo.analysisModel ?? null,
     analysisError: repo.analysisError ?? null,
+    analysisProgress: repo.analysisProgress ?? null,
   };
 }
 

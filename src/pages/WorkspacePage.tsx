@@ -1,6 +1,7 @@
 import { ArrowLeft, Plus, RotateCw } from "lucide-react";
 import { useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
+import { toast } from "sonner";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { AddRepoModal } from "@/components/repo/AddRepoModal";
@@ -8,13 +9,46 @@ import { RepoCard } from "@/components/repo/RepoCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { stopRegisteredPod } from "@/hooks/usePod";
 import { useWorkspace } from "@/hooks/useWorkspace";
+import { api } from "@/lib/api";
+import type { Repo } from "@/types";
 
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
   const [isAddRepoOpen, setIsAddRepoOpen] = useState(false);
-  const { workspace, repos, isLoading, error, refresh, addRepo } = useWorkspace(id);
+  const [stoppingRepoId, setStoppingRepoId] = useState<string | undefined>();
+  const { workspace, repos, isLoading, error, refresh, addRepo, updateRepo } = useWorkspace(id);
+
+  async function stopRepo(repo: Repo) {
+    if (stoppingRepoId) {
+      return;
+    }
+
+    setStoppingRepoId(repo.id);
+
+    try {
+      let localStopFailed = false;
+
+      await stopRegisteredPod(repo.id).catch(() => {
+        localStopFailed = true;
+      });
+
+      const stoppedRepo = await api.repos.stop(repo.id);
+      updateRepo(stoppedRepo);
+
+      if (localStopFailed) {
+        toast.warning("Cleared the running repo record, but the local sandbox may already be gone");
+      } else {
+        toast.success("Sandbox stopped");
+      }
+    } catch (stopError) {
+      toast.error(stopError instanceof Error ? stopError.message : "Unable to stop sandbox");
+    } finally {
+      setStoppingRepoId(undefined);
+    }
+  }
 
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
@@ -92,6 +126,8 @@ export function WorkspacePage() {
                     repo={repo}
                     onOpen={() => navigate(`/workspace/${id}/repo/${repo.id}`)}
                     onRun={() => navigate(`/workspace/${id}/repo/${repo.id}?run=true`)}
+                    onStop={() => void stopRepo(repo)}
+                    isStopping={stoppingRepoId === repo.id}
                   />
                 ))}
             </div>

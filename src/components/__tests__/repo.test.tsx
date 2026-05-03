@@ -38,6 +38,7 @@ const podMock = {
   terminalRef: { current: null },
   snapshot: { repoId: "temp", state: "idle", terminal: [] },
   bootstrapRepo: vi.fn(),
+  bootstrapRepoFiles: vi.fn(),
   collectAiExtractionPayload: vi.fn(),
   terminate: vi.fn(),
 };
@@ -45,6 +46,7 @@ const podMock = {
 beforeEach(() => {
   vi.mocked(usePod).mockReturnValue(podMock as never);
   podMock.bootstrapRepo.mockResolvedValue({ fileTree: makeFileTree(), runnability: makeRunnability() });
+  podMock.bootstrapRepoFiles.mockResolvedValue(makeFileTree());
   podMock.collectAiExtractionPayload.mockResolvedValue({ fileTree: makeFileTree(), files: [] });
   podMock.terminate.mockResolvedValue(undefined);
   vi.mocked(api.ai.extract).mockResolvedValue({ success: true, extractionId: "ext-1", status: "ready" });
@@ -103,7 +105,6 @@ describe("FileViewer", () => {
     ["index.js", "javascript"],
     ["index.jsx", "javascript"],
     ["package.json", "json"],
-    ["README.md", "markdown"],
     ["styles.css", "css"],
     ["index.html", "html"],
     ["script.py", "python"],
@@ -116,6 +117,14 @@ describe("FileViewer", () => {
     render(<FileViewer path={path} content="content" />);
 
     expect(screen.getByTestId("monaco-editor")).toHaveAttribute("data-language", language);
+  });
+
+  it("renders markdown files as formatted markdown", () => {
+    render(<FileViewer path="README.md" content={"# Title\n\n- item"} />);
+
+    expect(screen.getByRole("heading", { name: "Title" })).toBeInTheDocument();
+    expect(screen.getByText("item")).toBeInTheDocument();
+    expect(screen.queryByTestId("monaco-editor")).not.toBeInTheDocument();
   });
 
   it("updates the editor theme when the document theme changes", async () => {
@@ -176,16 +185,34 @@ describe("repo controls", () => {
   it("renders repo cards and stops run clicks from opening the card", async () => {
     const onOpen = vi.fn();
     const onRun = vi.fn();
-    render(<RepoCard repo={makeRepo({ portalUrl: "https://portal.example" })} onOpen={onOpen} onRun={onRun} />);
+    render(<RepoCard repo={makeRepo({ portalUrl: undefined })} onOpen={onOpen} onRun={onRun} />);
 
     expect(screen.getByText("frontend")).toBeInTheDocument();
     expect(screen.getByText("AI Readme")).toBeInTheDocument();
-    expect(screen.getByText("Live")).toBeInTheDocument();
     await userEvent.click(screen.getByTitle("Open and run repo"));
     expect(onRun).toHaveBeenCalledOnce();
     expect(onOpen).not.toHaveBeenCalled();
     await userEvent.click(screen.getByText("frontend"));
     expect(onOpen).toHaveBeenCalledOnce();
+  });
+
+  it("renders stop controls for running sandbox repos", async () => {
+    const onOpen = vi.fn();
+    const onStop = vi.fn();
+    render(
+      <RepoCard
+        repo={makeRepo({ status: "running", portalUrl: "https://portal.example" })}
+        onOpen={onOpen}
+        onRun={vi.fn()}
+        onStop={onStop}
+      />,
+    );
+
+    expect(screen.getByText("Live")).toBeInTheDocument();
+    await userEvent.click(screen.getByTitle("Stop sandbox"));
+
+    expect(onStop).toHaveBeenCalledOnce();
+    expect(onOpen).not.toHaveBeenCalled();
   });
 
   it("renders repo card status variants and active state", () => {
@@ -249,7 +276,7 @@ describe("AddRepoModal", () => {
     await userEvent.click(screen.getByRole("button", { name: "Add repo" }));
 
     await waitFor(() => expect(onAdd).toHaveBeenCalledWith("https://github.com/acme/frontend"));
-    expect(podMock.bootstrapRepo).toHaveBeenCalledWith("https://github.com/acme/frontend");
+    expect(podMock.bootstrapRepoFiles).toHaveBeenCalledWith("https://github.com/acme/frontend");
     expect(saveCachedFileTree).toHaveBeenCalledWith("repo-1", makeFileTree());
     expect(api.ai.extract).toHaveBeenCalledWith("repo-1", { fileTree: makeFileTree(), files: [] });
     expect(onComplete).toHaveBeenCalledOnce();

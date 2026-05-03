@@ -4,6 +4,7 @@ import type {
   FileTreeNode,
   Repo,
   RunnabilityResult,
+  SecurityScan,
   Workspace,
 } from "@/types";
 
@@ -98,6 +99,18 @@ export function makeWorkspace(overrides: Partial<Workspace> = {}): Workspace {
   };
 }
 
+export function makeSecurityScan(overrides: Partial<SecurityScan> = {}): SecurityScan {
+  return {
+    riskLevel: "low",
+    summary: "No high-risk findings in test data",
+    findings: [],
+    dependencyRisks: [],
+    scannedFiles: ["README.md", "package.json"],
+    notes: [],
+    ...overrides,
+  };
+}
+
 export function makeExtraction(overrides: Partial<ExtractionResponse> = {}): ExtractionResponse {
   return {
     success: true,
@@ -146,6 +159,7 @@ export function makeExtraction(overrides: Partial<ExtractionResponse> = {}): Ext
       },
     ],
     dependencies: { react: "^18.3.1" },
+    security: makeSecurityScan(),
     aiReadme: "# AI README\n\nGenerated docs",
     runnability: makeRunnability(),
     analysisUpdatedAt: "2026-05-01T12:00:00.000Z",

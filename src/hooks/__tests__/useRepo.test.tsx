@@ -37,12 +37,13 @@ describe("useRepo", () => {
   it("loads repo analysis from repo payload and caches it", async () => {
     const extraction = makeExtraction();
     reposApi.get.mockResolvedValueOnce(makeRepo({
-      analysis: extraction.techStack && extraction.overview
+      analysis: extraction.techStack && extraction.overview && extraction.security
         ? {
             techStack: extraction.techStack,
             overview: extraction.overview,
             functions: extraction.functions,
             dependencies: extraction.dependencies,
+            security: extraction.security,
           }
         : null,
       aiReadme: "# Fresh",

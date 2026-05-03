@@ -334,11 +334,14 @@ describe("PodLifecycleManager runnability", () => {
       if (path === "package.json") {
         return JSON.stringify({ scripts: { start: "node server.ts" }, engines: { node: ">=22" } });
       }
-      if (path === "server.ts") {
-        return 'app.get("/health", handler); router.route("/users/:id"); app.post("/api/items", handler);';
-      }
       throw new Error("skip");
     });
+    vi.spyOn(manager, "readRepoFiles").mockResolvedValue([
+      {
+        path: "server.ts",
+        content: 'app.get("/health", handler); router.route("/users/:id"); app.post("/api/items", handler);',
+      },
+    ]);
 
     await expect(manager.checkRunnability()).resolves.toMatchObject({
       canRun: true,
@@ -360,7 +363,9 @@ describe("PodLifecycleManager AI payload collection", () => {
         { name: "image.png", path: "image.png", type: "file", supported: false, extension: ".png", size: 20 },
       ],
     };
-    vi.spyOn(manager, "readRepoFile").mockImplementation(async (path) => `content:${path}`);
+    vi.spyOn(manager, "readRepoFiles").mockImplementation(async (paths) =>
+      paths.map((path) => ({ path, content: `content:${path}` })),
+    );
 
     const payload = await manager.collectAiExtractionPayload(tree);
 
