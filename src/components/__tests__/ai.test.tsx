@@ -185,6 +185,9 @@ describe("SecurityOverview", () => {
         {
           id: "evt-1",
           code: "startup-timeout",
+          source: "browserpod",
+          phase: "start",
+          category: "resource",
           severity: "medium",
           title: "Sandbox startup timed out",
           description: "The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.",

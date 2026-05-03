@@ -180,18 +180,25 @@ function createTerminalLine(text: string, stream: TerminalLine["stream"]): Termi
 
 function createSecurityEvent(
   code: SandboxSecurityEvent["code"],
+  phase: SandboxSecurityEvent["phase"],
+  category: SandboxSecurityEvent["category"],
   severity: SandboxSecurityEvent["severity"],
   title: string,
   description: string,
   evidence?: string,
+  command?: string,
 ): SandboxSecurityEvent {
   return {
     id: crypto.randomUUID(),
     code,
+    source: "browserpod",
+    phase,
+    category,
     severity,
     title,
     description,
     evidence,
+    command,
     createdAt: nowIso(),
   };
 }
@@ -773,7 +780,7 @@ export class PodLifecycleManager {
     }
   }
 
-  private waitForPortalStartup() {
+  private waitForPortalStartup(entryPoint: RunScriptName) {
     if (this.snapshot.portalUrl) {
       return Promise.resolve(true);
     }
@@ -788,13 +795,15 @@ export class PodLifecycleManager {
 
         done = true;
         removeWaiter();
-        const description = "The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.";
         this.recordSecurityEvent(createSecurityEvent(
           "startup-timeout",
-          "medium",
-          "Sandbox startup timed out",
-          description,
+          "start",
+          "resource",
+          "high",
+          "Dev server did not become ready",
+          "The project started a process but did not expose a BrowserPod portal before the timeout.",
           "No BrowserPod portal opened within 30 seconds.",
+          `npm run ${entryPoint}`,
         ));
         void this.stopProject().catch(() => undefined);
         resolve(false);
@@ -1314,10 +1323,13 @@ export class PodLifecycleManager {
           INSTALL_TIMEOUT_MS,
           () => createSecurityEvent(
             "install-timeout",
-            "medium",
-            "Dependency install timed out",
-            "Dependency installation did not finish within 60 seconds, so DevHub stopped the sandbox startup path.",
-            "npm install --ignore-scripts exceeded 60 seconds.",
+            "install",
+            "resource",
+            "high",
+            "Install timed out",
+            "The install command did not finish before the safety timeout.",
+            "npm install --ignore-scripts exceeded 60000ms.",
+            "npm install --ignore-scripts",
           ),
         );
 
@@ -1329,7 +1341,7 @@ export class PodLifecycleManager {
         this.runningProcess = process;
 
         if (!isKillableProcess(process)) {
-          const didOpenPortal = await this.waitForPortalStartup();
+          const didOpenPortal = await this.waitForPortalStartup(entryPoint);
 
           if (!didOpenPortal) {
             throw new Error("The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.");
@@ -1338,11 +1350,13 @@ export class PodLifecycleManager {
       } catch (error) {
         this.stopRuntimeSecurityMonitor();
         const message = error instanceof Error ? error.message : "Project process stopped";
-        const isExpectedSandboxStop = message.startsWith("The sandbox was stopped") || message.includes("Dependency installation did not finish");
+        const isExpectedSandboxStop = message.startsWith("The sandbox was stopped") || message.includes("install command did not finish");
 
         if (!isExpectedSandboxStop) {
           this.recordSecurityEvent(createSecurityEvent(
             "process-error",
+            "start",
+            "process",
             "medium",
             "Sandbox process error",
             "The project process stopped before DevHub could open a stable BrowserPod preview.",
@@ -1375,7 +1389,22 @@ export class PodLifecycleManager {
     const maybeKill = process?.kill ?? process?.terminate ?? process?.close;
 
     if (maybeKill) {
-      await maybeKill.call(process);
+      try {
+        await maybeKill.call(process);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "BrowserPod process kill failed";
+        this.recordSecurityEvent(createSecurityEvent(
+          "process-error",
+          "stop",
+          "process",
+          "high",
+          "Sandbox process did not stop cleanly",
+          "The frontend attempted to stop the running process but it did not exit cleanly.",
+          message,
+          "kill BrowserPod process",
+        ));
+        this.log(message, "stderr");
+      }
     }
 
     const killPatterns = ["npm run", "nodemon", "node server", "node app", "node index"];

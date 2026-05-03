@@ -82,11 +82,66 @@ describe("api endpoint contracts", () => {
       .mockResolvedValueOnce(jsonResponse({ data: makeRepo({ status: "running" }) }))
       .mockResolvedValueOnce(jsonResponse({ data: makeRepo({ status: "ready" }) }));
 
-    await expect(api.repos.run("repo-1", "https://portal.example")).resolves.toMatchObject({ status: "running" });
+    await expect(api.repos.run("repo-1", "https://portal.example", { sandboxConfirmed: true, manualOverride: true })).resolves.toMatchObject({ status: "running" });
     await expect(api.repos.stop("repo-1")).resolves.toMatchObject({ status: "ready" });
 
     expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/repos/repo-1/run", expect.objectContaining({ method: "POST" }));
+    expect(JSON.parse((fetchMock.mock.calls[0][1]?.body as string))).toEqual({
+      portalUrl: "https://portal.example",
+      sandboxConfirmed: true,
+      manualOverride: true,
+    });
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/repos/repo-1/stop", expect.objectContaining({ method: "POST" }));
+  });
+
+  it("calls repo security summary and runtime event endpoints", async () => {
+    fetchMock
+      .mockResolvedValueOnce(jsonResponse({
+        success: true,
+        repoId: "repo-1",
+        staticSecurity: null,
+        runtimeSecurity: {
+          riskLevel: "high",
+          eventCount: 1,
+          latestEventAt: "2026-05-03T00:00:00.000Z",
+          events: [{
+            id: "evt-1",
+            source: "browserpod",
+            phase: "install",
+            category: "resource",
+            severity: "high",
+            title: "Install timed out",
+            description: "The install command did not finish before the safety timeout.",
+            evidence: "npm install exceeded 60000ms",
+            command: "npm install --ignore-scripts",
+            createdAt: "2026-05-03T00:00:00.000Z",
+          }],
+        },
+        runnability: null,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ success: true, event: {}, runtimeSecurity: { riskLevel: "high", eventCount: 1, latestEventAt: "2026-05-03T00:00:00.000Z" } }));
+
+    await expect(api.repos.getSecurity("repo-1")).resolves.toMatchObject({
+      runtimeSecurity: {
+        riskLevel: "high",
+        eventCount: 1,
+        events: [expect.objectContaining({ title: "Install timed out" })],
+      },
+    });
+
+    await api.repos.reportSecurityEvent("repo-1", {
+      source: "browserpod",
+      phase: "install",
+      category: "resource",
+      severity: "high",
+      title: "Install timed out",
+      description: "The install command did not finish before the safety timeout.",
+      evidence: "npm install exceeded 60000ms",
+      command: "npm install --ignore-scripts",
+    });
+
+    expect(fetchMock).toHaveBeenNthCalledWith(1, "/api/repos/repo-1/security", expect.objectContaining({ method: "GET" }));
+    expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/repos/repo-1/security-events", expect.objectContaining({ method: "POST" }));
   });
 
   it("encodes repo file paths", async () => {

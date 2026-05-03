@@ -84,9 +84,11 @@ export interface RunnabilityResult {
   previewPaths?: string[];
 }
 
+export type RunnabilityBlockerSeverity = SecuritySeverity | "warning" | "error" | "unknown";
+
 export interface RunnabilityBlockerDetail {
   code: string;
-  severity: SecuritySeverity | "unknown";
+  severity: RunnabilityBlockerSeverity;
   title: string;
   description: string;
   recommendation: string;
@@ -135,13 +137,56 @@ export type SandboxSecurityEventCode =
   | "process-error"
   | "unsafe-install-retry";
 
-export interface SandboxSecurityEvent {
-  id: string;
-  code: SandboxSecurityEventCode;
-  severity: SecuritySeverity | "unknown";
+export type RuntimeSecurityEventPhase = "clone" | "install" | "start" | "preview" | "stop" | "runtime";
+export type RuntimeSecurityEventCategory = "filesystem" | "network" | "process" | "resource" | "install" | "sandbox" | "runtime" | "other";
+
+export interface RuntimeSecurityEventPayload {
+  source: "browserpod";
+  phase: RuntimeSecurityEventPhase;
+  category: RuntimeSecurityEventCategory;
+  severity: SecuritySeverity;
   title: string;
   description: string;
   evidence?: string;
+  command?: string;
+}
+
+export interface RuntimeSecurityEvent extends RuntimeSecurityEventPayload {
+  id?: string;
+  eventId?: string;
+  repoId?: string;
+  createdAt: string;
+}
+
+export interface RuntimeSecuritySummary {
+  riskLevel: SecuritySeverity | "unknown";
+  eventCount: number;
+  latestEventAt: string | null;
+  events: RuntimeSecurityEvent[];
+}
+
+export interface RepoSecurityResponse {
+  success: boolean;
+  repoId: string;
+  staticSecurity: SecurityScan | null;
+  runtimeSecurity: RuntimeSecuritySummary;
+  runnability: RunnabilityResult | null;
+}
+
+export interface RegisterSecurityEventResponse {
+  success: boolean;
+  event: RuntimeSecurityEvent;
+  runtimeSecurity: RuntimeSecuritySummary;
+}
+
+export interface RegisterRunOptions {
+  sandboxConfirmed?: boolean;
+  manualOverride?: boolean;
+}
+
+export interface SandboxSecurityEvent extends RuntimeSecurityEventPayload {
+  id: string;
+  code: SandboxSecurityEventCode;
   createdAt: string;
 }
 

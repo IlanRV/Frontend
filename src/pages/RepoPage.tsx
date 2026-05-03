@@ -40,7 +40,7 @@ import { api } from "@/lib/api";
 import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
 import { requiresSandboxConfirmation, runButtonLabel } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { FileTreeNode } from "@/types";
+import type { FileTreeNode, RegisterRunOptions } from "@/types";
 
 function findFirstSupportedFile(node: FileTreeNode): string | undefined {
   if (node.type === "file" && node.supported) {
@@ -114,6 +114,11 @@ export function RepoPage() {
     refresh,
     loadExtraction,
     loadAiReadme,
+    security,
+    isSecurityLoading,
+    securityError,
+    loadSecurity,
+    reportSecurityEvent,
     registerRun,
     registerStop,
   } = useRepo(repoId);
@@ -144,11 +149,13 @@ export function RepoPage() {
   const bootedRepoRef = useRef<string | undefined>();
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
+  const pendingRunOptionsRef = useRef<RegisterRunOptions>({});
+  const reportedSecurityEventsRef = useRef<Set<string>>(new Set());
   const aiReadmeRequestRef = useRef<string | undefined>();
   const securityRescanRequestRef = useRef<string | undefined>();
   const activeRepoRef = useRef<string | undefined>();
   const effectiveSecurity = extraction?.security ?? repo?.analysis?.security ?? null;
-  const effectiveRunnability = extraction?.runnability ?? snapshot.runnability ?? repo?.runnability ?? undefined;
+  const effectiveRunnability = security?.runnability ?? extraction?.runnability ?? snapshot.runnability ?? repo?.runnability ?? undefined;
 
   useEffect(() => {
     if (activeRepoRef.current === repoId) {
@@ -217,7 +224,7 @@ export function RepoPage() {
     [readFile, repoId, snapshot.state],
   );
 
-  const handleRun = useCallback(async (confirmed = false) => {
+  const handleRun = useCallback(async (confirmed = false, manualOverride = false) => {
     if (isRunActionPending) {
       return;
     }
@@ -229,9 +236,14 @@ export function RepoPage() {
 
     setIsSecurityConfirmOpen(false);
     setIsRunActionPending(true);
+    pendingRunOptionsRef.current = {
+      sandboxConfirmed: confirmed && requiresSandboxConfirmation(effectiveSecurity),
+      manualOverride,
+    };
 
     try {
       let runnability = effectiveRunnability;
+      const entryPoint = runnability?.entryPoint ?? (manualOverride ? repo?.runScript : undefined);
 
       if ((!runnability || runnability.canRun) && !snapshot.fileTree && repo?.githubUrl) {
         const prepared = await bootstrapRepo(repo.githubUrl);
@@ -240,12 +252,16 @@ export function RepoPage() {
         runnability = extraction?.runnability ?? prepared.runnability;
       }
 
-      if (!runnability?.canRun || !runnability.entryPoint) {
+      if ((!runnability?.canRun && !manualOverride) || !entryPoint) {
         toast.error("This repo is not runnable in BrowserPod yet");
         return;
       }
 
-      await runProject(runnability.entryPoint);
+      await runProject(entryPoint);
+      if (snapshot.portalUrl && registeredPortalRef.current !== snapshot.portalUrl) {
+        registeredPortalRef.current = snapshot.portalUrl;
+        await registerRun(snapshot.portalUrl, pendingRunOptionsRef.current);
+      }
       if (repo?.id) {
         setStoredRunIntent(repo.id, true);
       }
@@ -257,7 +273,7 @@ export function RepoPage() {
     } finally {
       setIsRunActionPending(false);
     }
-  }, [bootstrapRepo, effectiveRunnability, effectiveSecurity, extraction?.runnability, isRunActionPending, repo?.githubUrl, repo?.id, runProject, snapshot.fileTree]);
+  }, [bootstrapRepo, effectiveRunnability, effectiveSecurity, extraction?.runnability, isRunActionPending, registerRun, repo?.githubUrl, repo?.id, repo?.runScript, runProject, snapshot.fileTree, snapshot.portalUrl]);
 
   const handleStop = useCallback(async () => {
     if (isRunActionPending) {
@@ -384,20 +400,62 @@ export function RepoPage() {
       return;
     }
 
+    if (requiresSandboxConfirmation(effectiveSecurity) && !pendingRunOptionsRef.current.sandboxConfirmed) {
+      return;
+    }
+
+    if (effectiveRunnability && !effectiveRunnability.canRun && !pendingRunOptionsRef.current.manualOverride) {
+      return;
+    }
+
     registeredPortalRef.current = snapshot.portalUrl;
     if (repo?.id) {
       setStoredRunIntent(repo.id, true);
     }
-    void registerRun(snapshot.portalUrl).catch((registerError: unknown) => {
+    void registerRun(snapshot.portalUrl, pendingRunOptionsRef.current).catch((registerError: unknown) => {
       toast.error(registerError instanceof Error ? registerError.message : "Unable to save portal URL");
     });
-  }, [registerRun, repo?.id, snapshot.portalUrl]);
+  }, [effectiveRunnability, effectiveSecurity, registerRun, repo?.id, snapshot.portalUrl]);
+
+  useEffect(() => {
+    if (!repo?.id || snapshot.securityEvents?.length === 0) {
+      return;
+    }
+
+    for (const event of snapshot.securityEvents ?? []) {
+      const key = event.id;
+      if (reportedSecurityEventsRef.current.has(key)) {
+        continue;
+      }
+
+      reportedSecurityEventsRef.current.add(key);
+      void reportSecurityEvent({
+        source: event.source,
+        phase: event.phase,
+        category: event.category,
+        severity: event.severity,
+        title: event.title,
+        description: event.description,
+        evidence: event.evidence,
+        command: event.command,
+      }).catch(() => undefined);
+    }
+  }, [repo?.id, reportSecurityEvent, snapshot.securityEvents]);
+
+  useEffect(() => {
+    if (activeTab !== "security" || !repoId) {
+      return;
+    }
+
+    void loadSecurity();
+  }, [activeTab, loadSecurity, repoId]);
 
   const isRunning = snapshot.state === "running";
   const isBusy = isRunActionPending || isBusyPodState(snapshot.state);
   const portalUrl = snapshot.portalUrl;
   const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
   const safeRunLabel = effectiveRunnability?.canRun ? runButtonLabel(effectiveSecurity) : "Run";
+  const canManualOverride = !effectiveRunnability?.canRun && Boolean(repo?.runScript);
   const isTreeLoading =
     isLoading ||
     ((snapshot.state === "booting" || snapshot.state === "cloning") && !effectiveFileTree);
@@ -506,6 +564,11 @@ export function RepoPage() {
             onRun={() => void handleRun()}
             onStop={() => void handleStop()}
           />
+          {canManualOverride && !isRunning && (
+            <Button variant="outline" size="sm" disabled={isBusy} onClick={() => void handleRun(true, true)}>
+              Run with manual override
+            </Button>
+          )}
           {portalUrl && (
             <Button variant="outline" size="sm" asChild>
               <a href={portalUrl} target="_blank" rel="noreferrer">
@@ -621,8 +684,9 @@ export function RepoPage() {
                   extraction={extraction}
                   runnability={effectiveRunnability}
                   runtimeEvents={snapshot.securityEvents}
-                  isLoading={isAiLoading || repo?.status === "analyzing"}
-                  error={aiError}
+                  runtimeSecurity={security?.runtimeSecurity}
+                  isLoading={isAiLoading || isSecurityLoading || repo?.status === "analyzing"}
+                  error={aiError ?? securityError}
                   onRetry={repoId ? () => void api.ai.extractStored(repoId).then(() => {
                     void refresh();
                     void loadExtraction();

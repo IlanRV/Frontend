@@ -12,9 +12,17 @@ import type {
   ExtractionResponse,
   Repo,
   RepoFileResponse,
+  RegisterRunOptions,
+  RegisterSecurityEventResponse,
+  RepoSecurityResponse,
+  RunnabilityBlockerSeverity,
+  RunnabilityResult,
   SecurityConfidence,
   SecurityScan,
   SecuritySeverity,
+  RuntimeSecurityEvent,
+  RuntimeSecurityEventPayload,
+  RuntimeSecuritySummary,
   Workspace,
 } from "@/types";
 import { isRecord } from "@/lib/utils";
@@ -161,6 +169,33 @@ function normalizeStringArray(value: unknown) {
   return Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : [];
 }
 
+function normalizeRunnability(payload: unknown): RunnabilityResult | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const entryPoint = payload.entryPoint;
+  const blockerDetails = Array.isArray(payload.blockerDetails)
+    ? payload.blockerDetails.filter(isRecord).map((blocker) => ({
+        code: readString(blocker, "code") ?? "runtime-blocker",
+        severity: (readString(blocker, "severity") ?? "unknown") as RunnabilityBlockerSeverity,
+        title: readString(blocker, "title") ?? "Cannot start automatically",
+        description: readString(blocker, "description") ?? "DevHub could not start this repository automatically.",
+        recommendation: readString(blocker, "recommendation") ?? "Review the startup scripts manually.",
+        evidence: readString(blocker, "evidence") ?? null,
+      }))
+    : undefined;
+
+  return {
+    canRun: payload.canRun === true,
+    entryPoint: typeof entryPoint === "string" ? entryPoint : null,
+    blockers: normalizeStringArray(payload.blockers),
+    blockerDetails,
+    previewPath: readString(payload, "previewPath"),
+    previewPaths: normalizeStringArray(payload.previewPaths),
+  };
+}
+
 function normalizeSecurityScan(payload: unknown): SecurityScan | null {
   if (!isRecord(payload)) {
     return null;
@@ -201,6 +236,84 @@ function normalizeSecurityScan(payload: unknown): SecurityScan | null {
       : [],
     scannedFiles: normalizeStringArray(payload.scannedFiles),
     notes: normalizeStringArray(payload.notes),
+  };
+}
+
+function normalizeRuntimeEvent(payload: unknown): RuntimeSecurityEvent {
+  if (!isRecord(payload)) {
+    return {
+      source: "browserpod",
+      phase: "runtime",
+      category: "other",
+      severity: "info",
+      title: "Runtime sandbox event",
+      description: "A BrowserPod runtime event was reported.",
+      createdAt: new Date().toISOString(),
+    };
+  }
+
+  return {
+    ...(payload as unknown as RuntimeSecurityEvent),
+    id: readString(payload, "id") ?? readString(payload, "eventId"),
+    eventId: readString(payload, "eventId") ?? readString(payload, "id"),
+    source: "browserpod",
+    phase: (readString(payload, "phase") ?? "runtime") as RuntimeSecurityEvent["phase"],
+    category: (readString(payload, "category") ?? "other") as RuntimeSecurityEvent["category"],
+    severity: normalizeSeverity(payload.severity),
+    title: readString(payload, "title") ?? "Runtime sandbox event",
+    description: readString(payload, "description") ?? "A BrowserPod runtime event was reported.",
+    evidence: readString(payload, "evidence"),
+    command: readString(payload, "command"),
+    createdAt: readString(payload, "createdAt") ?? new Date().toISOString(),
+  };
+}
+
+function normalizeRuntimeSecurity(payload: unknown): RuntimeSecuritySummary {
+  if (!isRecord(payload)) {
+    return {
+      riskLevel: "unknown",
+      eventCount: 0,
+      latestEventAt: null,
+      events: [],
+    };
+  }
+
+  const riskLevel = readString(payload, "riskLevel");
+  const eventCount = typeof payload.eventCount === "number" ? payload.eventCount : Number(payload.eventCount);
+
+  return {
+    riskLevel: riskLevel === "critical" || riskLevel === "high" || riskLevel === "medium" || riskLevel === "low" || riskLevel === "info" || riskLevel === "unknown"
+      ? riskLevel
+      : "unknown",
+    eventCount: Number.isFinite(eventCount) ? eventCount : 0,
+    latestEventAt: readString(payload, "latestEventAt") ?? null,
+    events: Array.isArray(payload.events) ? payload.events.map(normalizeRuntimeEvent) : [],
+  };
+}
+
+function normalizeRepoSecurityResponse(payload: unknown): RepoSecurityResponse {
+  if (!isRecord(payload)) {
+    return payload as RepoSecurityResponse;
+  }
+
+  return {
+    success: payload.success !== false,
+    repoId: readString(payload, "repoId") ?? "",
+    staticSecurity: normalizeSecurityScan(payload.staticSecurity),
+    runtimeSecurity: normalizeRuntimeSecurity(payload.runtimeSecurity),
+    runnability: normalizeRunnability(payload.runnability),
+  };
+}
+
+function normalizeRegisterSecurityEventResponse(payload: unknown): RegisterSecurityEventResponse {
+  if (!isRecord(payload)) {
+    return payload as RegisterSecurityEventResponse;
+  }
+
+  return {
+    success: payload.success !== false,
+    event: normalizeRuntimeEvent(payload.event),
+    runtimeSecurity: normalizeRuntimeSecurity(payload.runtimeSecurity),
   };
 }
 
@@ -277,9 +390,7 @@ function normalizeExtractionResponse(payload: unknown): ExtractionResponse {
     dependencies: isRecord(payload.dependencies) ? (payload.dependencies as Record<string, string>) : {},
     security: normalizeSecurityScan(payload.security),
     aiReadme: typeof payload.aiReadme === "string" && payload.aiReadme.trim().length > 0 ? payload.aiReadme : null,
-    runnability: isRecord(payload.runnability)
-      ? (payload.runnability as unknown as ExtractionResponse["runnability"])
-      : null,
+    runnability: normalizeRunnability(payload.runnability),
     analysisUpdatedAt: readString(payload, "analysisUpdatedAt") ?? null,
     analysisModel: readString(payload, "analysisModel") ?? null,
     analysisError: readString(payload, "analysisError") ?? null,
@@ -367,13 +478,24 @@ export const api = {
     getFile: (repoId: string, path: string) =>
       apiFetch<RepoFileResponse>(`/repos/${repoId}/file?path=${encodeURIComponent(path)}`),
     delete: (repoId: string) => apiFetch<void>(`/repos/${repoId}`, { method: "DELETE" }),
-    run: (repoId: string, portalUrl: string) =>
+    run: (repoId: string, portalUrl: string, options: RegisterRunOptions = {}) =>
       apiFetch<unknown>(`/repos/${repoId}/run`, {
         method: "POST",
-        json: { portalUrl },
+        json: {
+          portalUrl,
+          ...(options.sandboxConfirmed ? { sandboxConfirmed: true } : {}),
+          ...(options.manualOverride ? { manualOverride: true } : {}),
+        },
       }).then(normalizeRepo),
     stop: (repoId: string) =>
       apiFetch<unknown>(`/repos/${repoId}/stop`, { method: "POST" }).then(normalizeRepo),
+    getSecurity: (repoId: string) =>
+      apiFetch<unknown>(`/repos/${repoId}/security`).then(normalizeRepoSecurityResponse),
+    reportSecurityEvent: (repoId: string, payload: RuntimeSecurityEventPayload) =>
+      apiFetch<unknown>(`/repos/${repoId}/security-events`, {
+        method: "POST",
+        json: payload,
+      }).then(normalizeRegisterSecurityEventResponse),
   },
   ai: {
     extract: (repoId: string, payload: ExtractAiPayload) =>

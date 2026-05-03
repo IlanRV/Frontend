@@ -78,6 +78,9 @@ export function PortalPreview({ portalUrl, previewPath, previewPaths, riskLevel 
             </a>
           </Button>
         </div>
+        <p className="rounded-md border border-cyan-200 bg-cyan-50 p-2 text-xs leading-5 text-cyan-950 dark:border-cyan-900 dark:bg-cyan-950 dark:text-cyan-100">
+          Running inside BrowserPod sandbox. This project cannot access your real filesystem, shell, SSH keys, cloud credentials, or local environment.
+        </p>
         <div className="flex flex-col gap-2 sm:flex-row">
           <Input
             value={path}

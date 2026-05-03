@@ -2,16 +2,19 @@ import { useCallback, useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
 import { loadCachedExtraction, saveCachedExtraction } from "@/lib/extractionCache";
-import type { AiReadme, ExtractionResponse, Repo } from "@/types";
+import type { AiReadme, ExtractionResponse, RegisterRunOptions, Repo, RepoSecurityResponse, RuntimeSecurityEventPayload } from "@/types";
 
 interface RepoState {
   repo?: Repo;
   extraction?: ExtractionResponse;
+  security?: RepoSecurityResponse;
   aiReadme?: AiReadme;
   error?: string;
   aiError?: string;
+  securityError?: string;
   isLoading: boolean;
   isAiLoading: boolean;
+  isSecurityLoading: boolean;
 }
 
 function getErrorMessage(error: unknown, fallback: string) {
@@ -61,6 +64,7 @@ function initialState(repoId: string | undefined): RepoState {
     aiReadme: aiReadmeFromExtraction(extraction),
     isLoading: Boolean(repoId),
     isAiLoading: false,
+    isSecurityLoading: false,
   };
 }
 
@@ -75,7 +79,7 @@ export function useRepo(repoId: string | undefined) {
 
   const refresh = useCallback(async () => {
     if (!repoId) {
-      setState({ isLoading: false, isAiLoading: false, error: "Missing repo id" });
+      setState({ isLoading: false, isAiLoading: false, isSecurityLoading: false, error: "Missing repo id" });
       return;
     }
 
@@ -136,13 +140,47 @@ export function useRepo(repoId: string | undefined) {
 
   const loadAiReadme = loadExtraction;
 
+  const loadSecurity = useCallback(async () => {
+    if (!repoId) {
+      return undefined;
+    }
+
+    setState((current) => ({ ...current, isSecurityLoading: true, securityError: undefined }));
+
+    try {
+      const security = await api.repos.getSecurity(repoId);
+      setState((current) => ({
+        ...current,
+        security,
+        isSecurityLoading: false,
+      }));
+      return security;
+    } catch (error) {
+      setState((current) => ({
+        ...current,
+        isSecurityLoading: false,
+        securityError: getErrorMessage(error, "Unable to load security events"),
+      }));
+      return undefined;
+    }
+  }, [repoId]);
+
+  const reportSecurityEvent = useCallback(async (payload: RuntimeSecurityEventPayload) => {
+    if (!repoId) {
+      throw new Error("Missing repo id");
+    }
+
+    await api.repos.reportSecurityEvent(repoId, payload);
+    return loadSecurity();
+  }, [loadSecurity, repoId]);
+
   const registerRun = useCallback(
-    async (portalUrl: string) => {
+    async (portalUrl: string, options: RegisterRunOptions = {}) => {
       if (!repoId) {
         throw new Error("Missing repo id");
       }
 
-      const repo = await api.repos.run(repoId, portalUrl);
+      const repo = await api.repos.run(repoId, portalUrl, options);
       setState((current) => ({ ...current, repo }));
       return repo;
     },
@@ -184,14 +222,19 @@ export function useRepo(repoId: string | undefined) {
   return {
     repo: state.repo,
     extraction: state.extraction,
+    security: state.security,
     aiReadme: state.aiReadme,
     isLoading: state.isLoading,
     isAiLoading: state.isAiLoading,
+    isSecurityLoading: state.isSecurityLoading,
     error: state.error,
     aiError: state.aiError,
+    securityError: state.securityError,
     refresh,
     loadExtraction,
     loadAiReadme,
+    loadSecurity,
+    reportSecurityEvent,
     registerRun,
     registerStop,
   };

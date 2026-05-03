@@ -423,7 +423,43 @@ describe("PodLifecycleManager project lifecycle", () => {
 
     await startupTimeout;
     expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
-      expect.objectContaining({ code: "startup-timeout", title: "Sandbox startup timed out" }),
+      expect.objectContaining({
+        code: "startup-timeout",
+        source: "browserpod",
+        phase: "start",
+        category: "resource",
+        severity: "high",
+        title: "Dev server did not become ready",
+        command: "npm run dev",
+      }),
+    ]));
+  });
+
+  it("records process kill failures as sandbox security events", async () => {
+    const kill = vi.fn().mockRejectedValue(new Error("kill refused"));
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    pod.run.mockImplementation(async (command: string, args: string[]) => {
+      if (command === "npm" && args[0] === "run") {
+        return { kill };
+      }
+      return {};
+    });
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    await manager.runProject("dev");
+    await manager.stopProject();
+
+    expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({
+        source: "browserpod",
+        phase: "stop",
+        category: "process",
+        severity: "high",
+        title: "Sandbox process did not stop cleanly",
+        evidence: "kill refused",
+      }),
     ]));
   });
 
