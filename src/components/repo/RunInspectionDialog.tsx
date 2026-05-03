@@ -3,7 +3,6 @@ import { Copy, ExternalLink, QrCode, ShieldAlert, Square } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { RefObject } from "react";
 
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -13,7 +12,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { projectKindLabel } from "@/lib/security";
 import { cn } from "@/lib/utils";
 import type { RepoProjectKind, SecurityScan, TerminalLine } from "@/types";
 
@@ -58,11 +56,7 @@ export function RunInspectionDialog({
   portalUrl,
   previewPath,
   previewPaths,
-  riskLevel,
   command,
-  previewExpected,
-  projectKind,
-  runtimeEventCount = 0,
   isStopping,
   onStop,
   terminalLines,
@@ -71,8 +65,6 @@ export function RunInspectionDialog({
   const [isQrVisible, setIsQrVisible] = useState(false);
   const [qrDataUrl, setQrDataUrl] = useState<string | undefined>();
   const iframeUrl = portalUrl ? appendPortalPath(portalUrl, path) : undefined;
-  const runModeLabel = iframeUrl || previewExpected ? "Preview expected" : "Console-only run";
-  const isHighRisk = riskLevel === "critical" || riskLevel === "high";
   const suggestions = useMemo(() => {
     const detected = previewPaths ?? [];
     const defaults = detected.length > 0 ? [previewPath, ...detected] : [previewPath ?? "/"];
@@ -112,12 +104,13 @@ export function RunInspectionDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange} modal={false}>
+      {open && <div aria-hidden="true" className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />}
       <DialogContent
         className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[86rem] overflow-hidden p-0 sm:w-[calc(100vw-2rem)]"
         onInteractOutside={(event) => event.preventDefault()}
       >
         <DialogHeader>
-          <div className="border-b border-border px-4 py-3 sm:px-5">
+          <div className="border-b border-border px-4 py-3 pr-12 sm:px-5 sm:pr-12">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
               <div>
                 <DialogTitle className="flex items-center gap-2">
@@ -127,12 +120,6 @@ export function RunInspectionDialog({
                 <DialogDescription className="mt-1">
                   {portalUrl ? "Inspect the BrowserPod preview and sandbox console together." : "Watch sandbox output while the command runs."}
                 </DialogDescription>
-              </div>
-              <div className="flex flex-wrap items-center gap-2 text-xs">
-                <Badge variant={runModeLabel === "Preview expected" ? "info" : "secondary"}>{runModeLabel}</Badge>
-                {projectKind && <Badge variant="outline">{projectKindLabel(projectKind)}</Badge>}
-                {runtimeEventCount > 0 && <Badge variant="warning">{runtimeEventCount} runtime alert(s)</Badge>}
-                {isHighRisk && <Badge variant="danger">High-risk repo</Badge>}
               </div>
             </div>
             <div className="mt-3 rounded-lg border border-border bg-muted/30 px-3 py-2 text-sm">
@@ -147,10 +134,7 @@ export function RunInspectionDialog({
             {iframeUrl ? (
               <div className="flex max-h-[58vh] min-h-[20rem] flex-col bg-background">
                 <div className="space-y-3 border-b border-border p-3 text-sm">
-                  <div className="flex flex-wrap items-center gap-2">
-                    <Badge variant="outline">Sandboxed by BrowserPod</Badge>
-                    <Badge variant="info">Live preview</Badge>
-                  </div>
+                  <p className="text-xs font-medium uppercase tracking-wide text-muted-foreground">BrowserPod live preview</p>
                   <div className="flex flex-col gap-2 sm:flex-row">
                     <Input
                       value={path}

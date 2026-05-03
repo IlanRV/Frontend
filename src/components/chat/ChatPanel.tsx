@@ -26,19 +26,44 @@ interface ChatPanelProps {
   className?: string;
 }
 
+const messageCache = new Map<string, ChatMessageType[]>();
+
+function cacheKey(scope: ChatScope) {
+  return `${scope.type}:${scope.id}`;
+}
+
+export function clearChatPanelCache() {
+  messageCache.clear();
+}
+
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
 export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProps) {
-  const [messages, setMessages] = useState<ChatMessageType[]>([]);
-  const [isLoading, setIsLoading] = useState(true);
+  const key = cacheKey(scope);
+  const [messages, setMessages] = useState<ChatMessageType[]>(() => messageCache.get(key) ?? []);
+  const [isLoading, setIsLoading] = useState(() => !messageCache.has(key));
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
 
+  const setCachedMessages = useCallback((updater: ChatMessageType[] | ((current: ChatMessageType[]) => ChatMessageType[])) => {
+    setMessages((current) => {
+      const next = typeof updater === "function" ? updater(current) : updater;
+      messageCache.set(key, next);
+      return next;
+    });
+  }, [key]);
+
   const loadMessages = useCallback(async () => {
-    setIsLoading(true);
+    const cached = messageCache.get(key);
+
+    if (cached) {
+      setMessages(cached);
+    }
+
+    setIsLoading(!cached);
     setError(undefined);
 
     try {
@@ -46,13 +71,13 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
         scope.type === "workspace"
           ? await api.chat.getWorkspace(scope.id)
           : await api.chat.getRepo(scope.id);
-      setMessages(normalizeChatMessages(response));
+      setCachedMessages(normalizeChatMessages(response));
     } catch (loadError) {
       setError(getErrorMessage(loadError, "Unable to load chat history"));
     } finally {
       setIsLoading(false);
     }
-  }, [scope.id, scope.type]);
+  }, [key, scope.id, scope.type, setCachedMessages]);
 
   const sendMessage = useCallback(
     async (content: string) => {
@@ -63,7 +88,7 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
         createdAt: new Date().toISOString(),
       };
 
-      setMessages((current) => [...current, userMessage]);
+      setCachedMessages((current) => [...current, userMessage]);
       setIsThinking(true);
 
       try {
@@ -78,7 +103,7 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
           toast.info("Reused the previous reply for this duplicate message");
         }
 
-        setMessages((current) => [
+        setCachedMessages((current) => [
           ...current,
           {
             id: createClientId("msg"),
@@ -90,12 +115,12 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
       } catch (sendError) {
         const message = getErrorMessage(sendError, "Unable to send message");
         toast.error(message);
-        setMessages((current) => current.filter((item) => item.id !== userMessage.id));
+        setCachedMessages((current) => current.filter((item) => item.id !== userMessage.id));
       } finally {
         setIsThinking(false);
       }
     },
-    [scope.id, scope.type],
+    [scope.id, scope.type, setCachedMessages],
   );
 
   useEffect(() => {

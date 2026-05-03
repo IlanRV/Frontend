@@ -222,7 +222,7 @@ describe("RunInspectionDialog", () => {
       />,
     );
 
-    expect(screen.getByText("Console-only run")).toBeInTheDocument();
+    expect(screen.getByText("No live preview yet")).toBeInTheDocument();
     expect(screen.getByText("test output")).toBeInTheDocument();
     expect(screen.queryByTitle("BrowserPod live preview")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show QR code" })).not.toBeInTheDocument();

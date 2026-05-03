@@ -24,6 +24,7 @@ interface RuntimeProfileCardProps {
   commandRuns?: Record<string, SandboxCommandRun>;
   terminalLines?: TerminalLine[];
   onOpenInspector?: () => void;
+  onStopRun?: () => void;
   onRunAuto?: (command: string) => void;
   onRunManualCommand?: (command: RuntimeCommandSuggestion) => void;
   onStopManualCommand?: (command: RuntimeCommandSuggestion) => void;
@@ -144,6 +145,7 @@ export function RuntimeProfileCard({
   commandRuns,
   terminalLines,
   onOpenInspector,
+  onStopRun,
   onRunAuto,
   onRunManualCommand,
   onStopManualCommand,
@@ -239,7 +241,7 @@ export function RuntimeProfileCard({
                   value={selectedRunOption?.key ?? ""}
                   onChange={(event) => setSelectedRunPath(event.target.value)}
                   className="h-9 rounded-md border border-input bg-background px-3 font-mono text-xs text-foreground shadow-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
-                  disabled={isBusy || hasActiveRun}
+                  disabled={isBusy}
                 >
                   {runPathOptions.map((option) => (
                     <option key={option.key} value={option.key}>{option.label}</option>
@@ -256,6 +258,12 @@ export function RuntimeProfileCard({
                 <Play className="h-4 w-4" />
                 Run selected in BrowserPod
               </Button>
+              {hasActiveRun && onStopRun && (
+                <Button type="button" variant="outline" size="sm" disabled={isBusy} onClick={onStopRun}>
+                  <Square className="h-4 w-4" />
+                  Stop current run
+                </Button>
+              )}
             </div>
           </div>
         )}

@@ -790,6 +790,7 @@ export function RepoPage() {
           commandRuns={manualCommandRuns}
           terminalLines={snapshot.terminal}
           onOpenInspector={() => setIsRunInspectorOpen(true)}
+          onStopRun={() => void handleStop()}
           onRunAuto={handleAutoCommand}
           onRunManualCommand={handleManualCommand}
           onStopManualCommand={handleStopManualCommand}
