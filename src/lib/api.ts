@@ -4,6 +4,8 @@ import type {
   AiReadme,
   ApiErrorShape,
   ChatHistoryResponse,
+  ChatConversationSummary,
+  ChatConversationsResponse,
   ChatMessage,
   ChatReplyResponse,
   CreateWorkspacePayload,
@@ -135,8 +137,30 @@ function normalizeChatMessage(payload: unknown): ChatMessage {
     ...(payload as unknown as ChatMessage),
     id: messageId,
     messageId,
+    conversationId: readString(payload, "conversationId"),
     createdAt,
     timestamp: readString(payload, "timestamp") ?? createdAt,
+  };
+}
+
+function normalizeChatConversation(payload: unknown): ChatConversationSummary | null {
+  if (!isRecord(payload)) {
+    return null;
+  }
+
+  const conversationId = readString(payload, "conversationId") ?? readString(payload, "id");
+
+  if (!conversationId) {
+    return null;
+  }
+
+  return {
+    ...(payload as unknown as ChatConversationSummary),
+    id: conversationId,
+    conversationId,
+    title: readString(payload, "title") ?? "New chat",
+    updatedAt: readString(payload, "updatedAt") ?? new Date().toISOString(),
+    messageCount: typeof payload.messageCount === "number" ? payload.messageCount : Number(payload.messageCount) || 0,
   };
 }
 
@@ -536,6 +560,15 @@ export function normalizeChatMessages(response: ChatHistoryResponse | ChatMessag
   return messages.map(normalizeChatMessage);
 }
 
+export function normalizeChatConversations(response: ChatConversationsResponse | ChatConversationSummary[]) {
+  const conversations = Array.isArray(response) ? response : response.conversations;
+  return conversations.map(normalizeChatConversation).filter((item): item is ChatConversationSummary => Boolean(item));
+}
+
+function conversationQuery(conversationId?: string) {
+  return conversationId ? `?conversationId=${encodeURIComponent(conversationId)}` : "";
+}
+
 export const api = {
   workspaces: {
     list: async () => (await apiFetch<unknown[]>("/workspaces")).map(normalizeWorkspace),
@@ -599,19 +632,37 @@ export const api = {
       ),
   },
   chat: {
+    listWorkspaceConversations: (workspaceId: string) =>
+      apiFetch<ChatConversationsResponse | ChatConversationSummary[]>(`/chat/workspace/${workspaceId}/conversations`).then(normalizeChatConversations),
     getWorkspace: (workspaceId: string) =>
       apiFetch<ChatHistoryResponse | ChatMessage[]>(`/chat/workspace/${workspaceId}`),
-    sendWorkspace: (workspaceId: string, message: string) =>
+    getWorkspaceConversation: (workspaceId: string, conversationId?: string) =>
+      apiFetch<ChatHistoryResponse | ChatMessage[]>(`/chat/workspace/${workspaceId}${conversationQuery(conversationId)}`),
+    sendWorkspace: (workspaceId: string, message: string, conversationId?: string) =>
       apiFetch<ChatReplyResponse>(`/chat/workspace/${workspaceId}`, {
         method: "POST",
-        json: { message },
+        json: { message, ...(conversationId ? { conversationId } : {}) },
       }),
+    clearWorkspace: (workspaceId: string, conversationId?: string) =>
+      apiFetch<{ success: boolean; conversationId: string; deletedCount: number }>(
+        `/chat/workspace/${workspaceId}${conversationQuery(conversationId)}`,
+        { method: "DELETE" },
+      ),
+    listRepoConversations: (repoId: string) =>
+      apiFetch<ChatConversationsResponse | ChatConversationSummary[]>(`/chat/repo/${repoId}/conversations`).then(normalizeChatConversations),
     getRepo: (repoId: string) =>
       apiFetch<ChatHistoryResponse | ChatMessage[]>(`/chat/repo/${repoId}`),
-    sendRepo: (repoId: string, message: string) =>
+    getRepoConversation: (repoId: string, conversationId?: string) =>
+      apiFetch<ChatHistoryResponse | ChatMessage[]>(`/chat/repo/${repoId}${conversationQuery(conversationId)}`),
+    sendRepo: (repoId: string, message: string, conversationId?: string) =>
       apiFetch<ChatReplyResponse>(`/chat/repo/${repoId}`, {
         method: "POST",
-        json: { message },
+        json: { message, ...(conversationId ? { conversationId } : {}) },
       }),
+    clearRepo: (repoId: string, conversationId?: string) =>
+      apiFetch<{ success: boolean; conversationId: string; deletedCount: number }>(
+        `/chat/repo/${repoId}${conversationQuery(conversationId)}`,
+        { method: "DELETE" },
+      ),
   },
 };

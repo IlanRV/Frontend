@@ -379,13 +379,23 @@ export type ChatRole = "user" | "assistant";
 export interface ChatMessage {
   id: string;
   messageId?: string;
+  conversationId?: string;
   role: ChatRole;
   content: string;
   createdAt: string;
   timestamp?: string;
 }
 
+export interface ChatConversationSummary {
+  id: string;
+  conversationId: string;
+  title: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
 export interface ChatHistoryResponse {
+  conversationId?: string;
   messages: ChatMessage[];
 }
 
@@ -393,6 +403,11 @@ export interface ChatReplyResponse {
   reply: string;
   degraded?: boolean;
   cached?: boolean;
+  conversationId?: string;
+}
+
+export interface ChatConversationsResponse {
+  conversations: ChatConversationSummary[];
 }
 
 export interface ApiErrorShape {

@@ -15,10 +15,16 @@ vi.mock("@/lib/api", async () => {
     ...actual,
     api: {
       chat: {
+        listWorkspaceConversations: vi.fn(),
+        listRepoConversations: vi.fn(),
         getWorkspace: vi.fn(),
+        getWorkspaceConversation: vi.fn(),
         sendWorkspace: vi.fn(),
+        clearWorkspace: vi.fn(),
         getRepo: vi.fn(),
+        getRepoConversation: vi.fn(),
         sendRepo: vi.fn(),
+        clearRepo: vi.fn(),
       },
     },
   };
@@ -73,23 +79,32 @@ describe("ChatMessage", () => {
 
 describe("ChatPanel", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
     clearChatPanelCache();
-    vi.spyOn(crypto, "randomUUID")
-      .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
-      .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
+    let uuidIndex = 0;
+    vi.spyOn(crypto, "randomUUID").mockImplementation(() => {
+      uuidIndex += 1;
+      return `00000000-0000-4000-8000-${String(uuidIndex).padStart(12, "0")}` as ReturnType<typeof crypto.randomUUID>;
+    });
+    chatApi.listWorkspaceConversations.mockResolvedValue([]);
+    chatApi.listRepoConversations.mockResolvedValue([]);
+    chatApi.getWorkspaceConversation.mockResolvedValue([]);
+    chatApi.getRepoConversation.mockResolvedValue([]);
+    chatApi.clearWorkspace.mockResolvedValue({ success: true, conversationId: "default", deletedCount: 0 });
+    chatApi.clearRepo.mockResolvedValue({ success: true, conversationId: "default", deletedCount: 0 });
   });
 
   it("loads and displays workspace messages", async () => {
-    chatApi.getWorkspace.mockResolvedValueOnce({ messages: [makeChatMessage({ content: "Saved answer" })] });
+    chatApi.getWorkspaceConversation.mockResolvedValueOnce({ messages: [makeChatMessage({ content: "Saved answer" })] });
 
     render(<ChatPanel scope={{ type: "workspace", id: "workspace-1" }} />);
 
     await waitFor(() => expect(screen.getByText("Saved answer")).toBeInTheDocument());
-    expect(chatApi.getWorkspace).toHaveBeenCalledWith("workspace-1");
+    expect(chatApi.getWorkspaceConversation).toHaveBeenCalledWith("workspace-1", "default");
   });
 
   it("shows load errors and retries", async () => {
-    chatApi.getRepo
+    chatApi.getRepoConversation
       .mockRejectedValueOnce(new Error("history failed"))
       .mockResolvedValueOnce([]);
 
@@ -101,7 +116,7 @@ describe("ChatPanel", () => {
   });
 
   it("optimistically sends repo messages and appends replies", async () => {
-    chatApi.getRepo.mockResolvedValueOnce([]);
+    chatApi.getRepoConversation.mockResolvedValueOnce([]);
     chatApi.sendRepo.mockResolvedValueOnce({ reply: "Assistant reply" });
 
     render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
@@ -110,13 +125,13 @@ describe("ChatPanel", () => {
     await userEvent.type(screen.getByPlaceholderText("Ask about this codebase..."), "What is this?");
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
-    expect(screen.getByText("What is this?")).toBeInTheDocument();
+    expect(screen.getAllByText("What is this?").length).toBeGreaterThan(0);
     await waitFor(() => expect(screen.getByText("Assistant reply")).toBeInTheDocument());
-    expect(chatApi.sendRepo).toHaveBeenCalledWith("repo-1", "What is this?");
+    expect(chatApi.sendRepo).toHaveBeenCalledWith("repo-1", "What is this?", "default");
   });
 
   it("keeps repo chat history when another panel opens", async () => {
-    chatApi.getRepo.mockResolvedValueOnce([]);
+    chatApi.getRepoConversation.mockResolvedValueOnce([]);
     chatApi.sendRepo.mockResolvedValueOnce({ reply: "Assistant reply" });
 
     const { unmount } = render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
@@ -127,15 +142,15 @@ describe("ChatPanel", () => {
     await waitFor(() => expect(screen.getByText("Assistant reply")).toBeInTheDocument());
 
     unmount();
-    chatApi.getRepo.mockImplementationOnce(() => new Promise(() => undefined));
+    chatApi.getRepoConversation.mockImplementationOnce(() => new Promise(() => undefined));
     render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
 
-    expect(screen.getByText("Explain this repo")).toBeInTheDocument();
+    expect(screen.getAllByText("Explain this repo").length).toBeGreaterThan(0);
     expect(screen.getByText("Assistant reply")).toBeInTheDocument();
   });
 
   it("removes optimistic messages when send fails", async () => {
-    chatApi.getWorkspace.mockResolvedValueOnce([]);
+    chatApi.getWorkspaceConversation.mockResolvedValueOnce([]);
     chatApi.sendWorkspace.mockRejectedValueOnce(new Error("send failed"));
 
     render(<ChatPanel scope={{ type: "workspace", id: "workspace-1" }} />);
@@ -145,5 +160,34 @@ describe("ChatPanel", () => {
     await userEvent.click(screen.getByRole("button", { name: "Send message" }));
 
     await waitFor(() => expect(screen.queryByText("broken")).not.toBeInTheDocument());
+  });
+
+  it("starts a new repo chat and sends it with a separate conversation id", async () => {
+    chatApi.getRepoConversation.mockResolvedValue([]);
+    chatApi.sendRepo.mockResolvedValueOnce({ reply: "Fresh reply" });
+
+    render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
+
+    await waitFor(() => expect(screen.getByText("Start a conversation about the code in this context.")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "New chat" }));
+    await userEvent.type(screen.getByPlaceholderText("Ask about this codebase..."), "Fresh question");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+
+    await waitFor(() => expect(screen.getByText("Fresh reply")).toBeInTheDocument());
+    expect(chatApi.sendRepo).toHaveBeenCalledWith("repo-1", "Fresh question", "chat-00000000-0000-4000-8000-000000000001");
+  });
+
+  it("clears the active repo chat history", async () => {
+    chatApi.getRepoConversation.mockResolvedValueOnce({ messages: [makeChatMessage({ content: "Saved answer" })] });
+    chatApi.clearRepo.mockResolvedValueOnce({ success: true, conversationId: "default", deletedCount: 1 });
+
+    render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
+
+    await waitFor(() => expect(screen.getByText("Saved answer")).toBeInTheDocument());
+    await userEvent.click(screen.getByRole("button", { name: "Clear chat" }));
+
+    expect(chatApi.clearRepo).toHaveBeenCalledWith("repo-1", "default");
+    await waitFor(() => expect(screen.queryByText("Saved answer")).not.toBeInTheDocument());
+    expect(screen.getByText("Start a conversation about the code in this context.")).toBeInTheDocument();
   });
 });

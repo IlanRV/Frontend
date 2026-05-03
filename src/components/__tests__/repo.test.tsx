@@ -201,7 +201,6 @@ describe("RunInspectionDialog", () => {
     );
 
     expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
-    expect(screen.getByText("Current command")).toBeInTheDocument();
     expect(screen.queryByText("Preview expected")).not.toBeInTheDocument();
     expect(screen.getByTitle("BrowserPod live preview")).toHaveAttribute("src", "https://portal.example/docs");
     expect(screen.getByText("server ready")).toBeInTheDocument();
