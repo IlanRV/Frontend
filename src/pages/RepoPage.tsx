@@ -19,8 +19,8 @@ import { SecurityOverview } from "@/components/ai/SecurityOverview";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { FileTree } from "@/components/repo/FileTree";
 import { FileViewer } from "@/components/repo/FileViewer";
-import { PortalPreview } from "@/components/repo/PortalPreview";
 import { RunButton } from "@/components/repo/RunButton";
+import { RunInspectionDialog } from "@/components/repo/RunInspectionDialog";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
 import { RuntimeProfileCard } from "@/components/repo/RuntimeProfileCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -162,6 +162,7 @@ export function RepoPage() {
   const [isSidebarOpen, setIsSidebarOpen] = useState(true);
   const [isConsoleOpen, setIsConsoleOpen] = useState(false);
   const [isRunActionPending, setIsRunActionPending] = useState(false);
+  const [isRunInspectorOpen, setIsRunInspectorOpen] = useState(false);
   const [isSecurityConfirmOpen, setIsSecurityConfirmOpen] = useState(false);
   const [lastRunCommand, setLastRunCommand] = useState<string | undefined>();
   const [manualCommandRuns, setManualCommandRuns] = useState<Record<string, SandboxCommandRun>>({});
@@ -191,6 +192,7 @@ export function RepoPage() {
     setBootstrapError(undefined);
     setActiveTab("code");
     setIsRunActionPending(false);
+    setIsRunInspectorOpen(false);
     setLastRunCommand(undefined);
     setManualCommandRuns({});
     autoRunRef.current = false;
@@ -299,9 +301,7 @@ export function RepoPage() {
       if (previewExpected && repo?.id) {
         setStoredRunIntent(repo.id, true);
       }
-      if (previewExpected) {
-        setActiveTab("live");
-      }
+      setIsRunInspectorOpen(true);
       setIsConsoleOpen(true);
       toast.success(previewExpected ? "Project starting in BrowserPod" : "Sandbox command started in BrowserPod");
         return true;
@@ -485,7 +485,7 @@ export function RepoPage() {
               return runProject(command, { previewExpected: true })
               .then(() => {
                 setStoredRunIntent(repo.id, true);
-                setActiveTab("live");
+                setIsRunInspectorOpen(true);
                 setIsConsoleOpen(true);
               });
             })
@@ -646,7 +646,7 @@ export function RepoPage() {
   }, [fileError, isFileLoading, selectedPath, selectFile, snapshot.state]);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 xl:max-w-[104rem] xl:pr-[25rem]">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 xl:max-w-[108rem] xl:pr-[30rem]">
       <Dialog open={isSecurityConfirmOpen} onOpenChange={(open) => {
         setIsSecurityConfirmOpen(open);
         if (!open) {
@@ -734,6 +734,11 @@ export function RepoPage() {
               </a>
             </Button>
           )}
+          {(portalUrl || lastRunCommand || snapshot.terminal.length > 0) && (
+            <Button variant="outline" size="sm" onClick={() => setIsRunInspectorOpen(true)}>
+              Inspector
+            </Button>
+          )}
           <Button variant="outline" size="sm" onClick={() => setActiveTab("ai-readme")}>
             <Bot className="h-4 w-4" />
             AI Readme
@@ -805,7 +810,6 @@ export function RepoPage() {
                   <TabsTrigger value="code">Code</TabsTrigger>
                   <TabsTrigger value="ai-readme">AI Readme</TabsTrigger>
                   <TabsTrigger value="functions">Functions</TabsTrigger>
-                  <TabsTrigger value="live">Live Preview</TabsTrigger>
                   <TabsTrigger value="security">Security</TabsTrigger>
                 </TabsList>
               </div>
@@ -842,20 +846,6 @@ export function RepoPage() {
                   repoName={repo?.name}
                   onRetry={() => void loadExtraction()}
                   progress={analysisProgress}
-                />
-              </TabsContent>
-
-              <TabsContent value="live" className="min-h-[36rem]">
-                <PortalPreview
-                  portalUrl={portalUrl}
-                  previewPath={effectiveRunnability?.previewPath}
-                  previewPaths={effectiveRunnability?.previewPaths}
-                  riskLevel={effectiveSecurity?.riskLevel}
-                  command={lastRunCommand ?? autoPreviewCommand}
-                  projectKind={effectiveRunnability?.runtimeProfile?.projectKind}
-                  runtimeEventCount={(snapshot.securityEvents?.length ?? 0) + (security?.runtimeSecurity.eventCount ?? 0)}
-                  isStopping={isBusy}
-                  onStop={isRunning ? () => void handleStop() : undefined}
                 />
               </TabsContent>
 
@@ -909,7 +899,7 @@ export function RepoPage() {
       )}
 
       {!error && (
-        <aside className="mt-4 xl:fixed xl:right-6 xl:top-1/2 xl:z-40 xl:mt-0 xl:w-[22rem] xl:-translate-y-1/2">
+        <aside className="mt-4 xl:fixed xl:right-6 xl:top-1/2 xl:z-40 xl:mt-0 xl:w-[27rem] xl:-translate-y-1/2">
           {repoId ? (
             <ChatPanel
               scope={{ type: "repo", id: repoId }}
@@ -921,6 +911,20 @@ export function RepoPage() {
           )}
         </aside>
       )}
+      <RunInspectionDialog
+        open={isRunInspectorOpen}
+        onOpenChange={setIsRunInspectorOpen}
+        portalUrl={portalUrl}
+        previewPath={effectiveRunnability?.previewPath}
+        previewPaths={effectiveRunnability?.previewPaths}
+        riskLevel={effectiveSecurity?.riskLevel}
+        command={lastRunCommand ?? autoPreviewCommand}
+        projectKind={effectiveRunnability?.runtimeProfile?.projectKind}
+        runtimeEventCount={(snapshot.securityEvents?.length ?? 0) + (security?.runtimeSecurity.eventCount ?? 0)}
+        isStopping={isBusy}
+        onStop={isRunning ? () => void handleStop() : undefined}
+        terminalLines={snapshot.terminal}
+      />
     </main>
   );
 }

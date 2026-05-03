@@ -1,4 +1,5 @@
 import { Play, Square, TerminalSquare } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -98,6 +99,7 @@ function isRunningStatus(run: SandboxCommandRun | undefined) {
 }
 
 export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalLines, onRunAuto, onRunManualCommand, onStopManualCommand }: RuntimeProfileCardProps) {
+  const [areDetailsOpen, setAreDetailsOpen] = useState(false);
   const profile = runnability?.runtimeProfile;
   const autoCommand = getAutoPreviewCommand(runnability);
   const manualCommands = getManualCommands(runnability);
@@ -243,20 +245,36 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
           </div>
         )}
 
-        {profile?.reasoning && (
-          <div className="rounded-md border border-border bg-muted/30 p-3 leading-6 text-muted-foreground">
-            <span className="font-semibold text-foreground">Reasoning: </span>{profile.reasoning}
-          </div>
-        )}
+        {(profile?.reasoning || (profile?.evidence && profile.evidence.length > 0)) && (
+          <div className="rounded-md border border-border bg-muted/30">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-semibold hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-expanded={areDetailsOpen}
+              onClick={() => setAreDetailsOpen((open) => !open)}
+            >
+              Runtime details
+            </button>
+            {areDetailsOpen && (
+              <div className="space-y-3 border-t border-border p-3">
+                {profile.reasoning && (
+                  <div className="leading-6 text-muted-foreground">
+                    <span className="font-semibold text-foreground">Reasoning: </span>{profile.reasoning}
+                  </div>
+                )}
 
-        {profile?.evidence && profile.evidence.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="font-semibold">Runtime evidence</h3>
-            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              {profile.evidence.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
+                {profile.evidence && profile.evidence.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="font-semibold">Runtime evidence</h3>
+                    <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                      {profile.evidence.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </CardContent>

@@ -233,6 +233,7 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("Runtime profile")).toBeInTheDocument();
     expect(screen.getByText("Auto preview command")).toBeInTheDocument();
     expect(screen.getByText("npm run dev")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Runtime details" }));
     expect(screen.getByText("package.json scripts.dev")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Run preview in BrowserPod" }));
     expect(onRunAuto).toHaveBeenCalledWith("npm run dev");

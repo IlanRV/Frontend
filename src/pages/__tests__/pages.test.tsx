@@ -796,8 +796,9 @@ describe("RepoPage", () => {
     await waitFor(() => expect(loadExtraction).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("functions-viewer")).toHaveTextContent("frontend functions");
 
-    await userEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
-    expect(screen.getByTestId("portal-preview")).toHaveTextContent("https://portal.example");
+    expect(screen.queryByRole("tab", { name: "Live Preview" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Inspector" }));
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
   });
 
