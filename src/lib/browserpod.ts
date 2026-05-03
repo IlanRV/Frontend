@@ -79,6 +79,7 @@ const CLONE_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 60_000;
 const PORTAL_STARTUP_TIMEOUT_MS = 30_000;
 const STOP_TIMEOUT_MS = 10_000;
+const ANSI_ESCAPE_PATTERN = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
 
 interface PodLifecycleManagerOptions {
   repoId: string;
@@ -736,7 +737,7 @@ export class PodLifecycleManager {
   }
 
   private recordRuntimeOutput(text: string) {
-    const cleaned = text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim();
+    const cleaned = text.replace(ANSI_ESCAPE_PATTERN, "").trim();
 
     if (!cleaned) {
       return;
