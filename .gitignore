@@ -14,4 +14,5 @@ yarn-error.log*
 pnpm-debug.log*
 .DS_Store
 .env
+.env.production
 *.env
