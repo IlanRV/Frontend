@@ -42,6 +42,32 @@ function commandRunButtonText(label: string) {
   return label.toLowerCase().startsWith("run ") ? `${label} in BrowserPod` : `Run ${label} in BrowserPod`;
 }
 
+function commandHint(command: RuntimeCommandSuggestion) {
+  return [command.source, command.reason, command.evidence, command.description].filter(Boolean).join(" ").toLowerCase();
+}
+
+function commandBadgeLabel(command: RuntimeCommandSuggestion) {
+  if (command.source) {
+    return command.source;
+  }
+
+  const hint = commandHint(command);
+
+  if (/workspace|package\.json|package script|root package|npm workspace/.test(hint)) {
+    return "Workspace script";
+  }
+
+  if (/readme|documentation|docs/.test(hint)) {
+    return "README instruction";
+  }
+
+  return "Suggested command";
+}
+
+function runtimeEvidenceSummary(runnability: RunnabilityResult | null | undefined) {
+  return runnability?.runtimeProfile?.evidence?.slice(0, 2).join(" · ");
+}
+
 function manualOnlyMessage(runnability: RunnabilityResult | null | undefined) {
   switch (runnability?.runtimeProfile?.projectKind) {
     case "api-server":
@@ -132,7 +158,7 @@ function commandSourceLabel(command: RuntimeCommandSuggestion) {
     case "package-manager":
       return "Package manager";
     default:
-      return "Alternate";
+      return commandBadgeLabel(command);
   }
 }
 
@@ -173,6 +199,7 @@ export function RuntimeProfileCard({
   const isSelectedRunning = isRunningStatus(selectedRun);
   const hasActiveRun = Boolean(isRunning || hasActiveManualRun);
   const hasRuntimeProfileFields = Boolean(profile || runnability?.autoCommand || manualCommands.length > 0);
+  const evidenceSummary = runtimeEvidenceSummary(runnability);
 
   if (!hasRuntimeProfileFields) {
     return null;
@@ -289,6 +316,11 @@ export function RuntimeProfileCard({
             <p className="leading-6 text-emerald-900/80 dark:text-emerald-100/80">
               This is the best automatic preview path from the backend runtime profile.
             </p>
+            {evidenceSummary && (
+              <p className="mt-2 break-words rounded-md border border-emerald-200/70 bg-white/60 p-2 font-mono text-xs text-emerald-950 dark:border-emerald-900/70 dark:bg-emerald-950/60 dark:text-emerald-100">
+                Evidence: {evidenceSummary}
+              </p>
+            )}
           </div>
         )}
 
@@ -320,7 +352,7 @@ export function RuntimeProfileCard({
                 return (
                   <div key={command.command} className="rounded-md border border-border bg-background p-3">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
-                      <Badge variant="outline">{command.source ?? "unknown"}</Badge>
+                      <Badge variant="outline">{commandBadgeLabel(command)}</Badge>
                       <Badge variant={command.confidence === "high" ? "success" : command.confidence === "medium" ? "warning" : "secondary"}>
                         {command.confidence ?? "low"} confidence
                       </Badge>
