@@ -4,7 +4,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
-import { ChatPanel, clearChatPanelCache } from "@/components/chat/ChatPanel";
+import { ChatPanel } from "@/components/chat/ChatPanel";
+import { clearChatPanelCache } from "@/components/chat/chatPanelStore";
 import { api } from "@/lib/api";
 import { makeChatMessage } from "@/test/factories";
 

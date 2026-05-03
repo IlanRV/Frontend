@@ -4,6 +4,7 @@ import { toast } from "sonner";
 
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
+import { chatPanelCacheKey, getCachedChatMessages, setCachedChatMessages } from "@/components/chat/chatPanelStore";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { api, normalizeChatMessages } from "@/lib/api";
@@ -26,24 +27,14 @@ interface ChatPanelProps {
   className?: string;
 }
 
-const messageCache = new Map<string, ChatMessageType[]>();
-
-function cacheKey(scope: ChatScope) {
-  return `${scope.type}:${scope.id}`;
-}
-
-export function clearChatPanelCache() {
-  messageCache.clear();
-}
-
 function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
 export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProps) {
-  const key = cacheKey(scope);
-  const [messages, setMessages] = useState<ChatMessageType[]>(() => messageCache.get(key) ?? []);
-  const [isLoading, setIsLoading] = useState(() => !messageCache.has(key));
+  const key = chatPanelCacheKey(scope);
+  const [messages, setMessages] = useState<ChatMessageType[]>(() => getCachedChatMessages(key) ?? []);
+  const [isLoading, setIsLoading] = useState(() => !getCachedChatMessages(key));
   const [isThinking, setIsThinking] = useState(false);
   const [error, setError] = useState<string | undefined>();
   const bottomRef = useRef<HTMLDivElement | null>(null);
@@ -51,13 +42,13 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
   const setCachedMessages = useCallback((updater: ChatMessageType[] | ((current: ChatMessageType[]) => ChatMessageType[])) => {
     setMessages((current) => {
       const next = typeof updater === "function" ? updater(current) : updater;
-      messageCache.set(key, next);
+      setCachedChatMessages(key, next);
       return next;
     });
   }, [key]);
 
   const loadMessages = useCallback(async () => {
-    const cached = messageCache.get(key);
+    const cached = getCachedChatMessages(key);
 
     if (cached) {
       setMessages(cached);
