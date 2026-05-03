@@ -471,6 +471,20 @@ describe("RepoPage", () => {
     expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
   });
 
+  it("keeps repo chat available while the run inspector is open", async () => {
+    const pod = podHook();
+    mockedUsePod.mockReturnValue(pod);
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Run in BrowserPod" }));
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "Open repo chat" }));
+
+    expect(screen.getByRole("complementary", { name: "Inspector chat" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("chat-panel").at(-1)).toHaveTextContent("Repo AI");
+  });
+
   it("uses backend autoCommand only for auto-preview runtime profiles", async () => {
     const runProject = vi.fn().mockResolvedValue(undefined);
     const runnability = makeRunnability({

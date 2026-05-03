@@ -319,6 +319,29 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("console-only")).toBeInTheDocument();
   });
 
+  it("runs the selected official or AI-suggested path from a dropdown", async () => {
+    const onRunAuto = vi.fn();
+    const onRunManualCommand = vi.fn();
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev",
+        manualCommands: [
+          { command: "npm test", label: "Run tests", source: "ai", confidence: "medium", previewExpected: false },
+        ],
+      }),
+    })} onRunAuto={onRunAuto} onRunManualCommand={onRunManualCommand} />);
+
+    expect(screen.getByLabelText("Run path")).toHaveValue("official");
+    await userEvent.click(screen.getByRole("button", { name: "Run selected in BrowserPod" }));
+    expect(onRunAuto).toHaveBeenCalledWith("npm run dev");
+
+    await userEvent.selectOptions(screen.getByLabelText("Run path"), "manual-0");
+    await userEvent.click(screen.getByRole("button", { name: "Run selected in BrowserPod" }));
+
+    expect(onRunManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test", source: "ai" }));
+  });
+
   it("offers the active run inspector while running", async () => {
     const onOpenInspector = vi.fn();
     render(<RuntimeProfileCard
