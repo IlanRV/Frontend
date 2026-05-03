@@ -1,4 +1,5 @@
-import { Play, Square, TerminalSquare } from "lucide-react";
+import { ChevronDown, ChevronUp, Play, Square, TerminalSquare } from "lucide-react";
+import { useState } from "react";
 
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -17,8 +18,13 @@ import type { RunnabilityResult, RuntimeCommandSuggestion, SandboxCommandRun, Te
 interface RuntimeProfileCardProps {
   runnability?: RunnabilityResult | null;
   isBusy?: boolean;
+  isRunning?: boolean;
+  hasInspector?: boolean;
+  activeCommand?: string;
   commandRuns?: Record<string, SandboxCommandRun>;
   terminalLines?: TerminalLine[];
+  onOpenInspector?: () => void;
+  onStopRun?: () => void;
   onRunAuto?: (command: string) => void;
   onRunManualCommand?: (command: RuntimeCommandSuggestion) => void;
   onStopManualCommand?: (command: RuntimeCommandSuggestion) => void;
@@ -97,43 +103,180 @@ function isRunningStatus(run: SandboxCommandRun | undefined) {
   return run?.status === "starting" || run?.status === "running" || run?.status === "stopping";
 }
 
-export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalLines, onRunAuto, onRunManualCommand, onStopManualCommand }: RuntimeProfileCardProps) {
+function alternateRunSummary(count: number) {
+  if (count === 0) {
+    return "No alternate runs";
+  }
+
+  return `${count} alternate run${count === 1 ? "" : "s"}`;
+}
+
+interface RunPathOption {
+  key: string;
+  label: string;
+  command: string;
+  isManual: boolean;
+  manualCommand?: RuntimeCommandSuggestion;
+}
+
+function commandSourceLabel(command: RuntimeCommandSuggestion) {
+  switch (command.source) {
+    case "ai":
+      return "AI suggestion";
+    case "readme":
+      return "Documentation";
+    case "package-script":
+      return "Package script";
+    case "static-analysis":
+      return "Static analysis";
+    case "package-manager":
+      return "Package manager";
+    default:
+      return "Alternate";
+  }
+}
+
+export function RuntimeProfileCard({
+  runnability,
+  isBusy,
+  isRunning,
+  hasInspector,
+  activeCommand,
+  commandRuns,
+  terminalLines,
+  onOpenInspector,
+  onStopRun,
+  onRunAuto,
+  onRunManualCommand,
+  onStopManualCommand,
+}: RuntimeProfileCardProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const [areDetailsOpen, setAreDetailsOpen] = useState(false);
   const profile = runnability?.runtimeProfile;
   const autoCommand = getAutoPreviewCommand(runnability);
   const manualCommands = getManualCommands(runnability);
+  const runPathOptions: RunPathOption[] = [
+    ...(autoCommand ? [{ key: "official", label: `Official BrowserPod: ${autoCommand}`, command: autoCommand, isManual: false }] : []),
+    ...manualCommands.map((command, index) => ({
+      key: `manual-${index}`,
+      label: `${commandSourceLabel(command)}: ${commandLabel(command)} — ${command.command}`,
+      command: command.command,
+      isManual: true,
+      manualCommand: command,
+    })),
+  ];
+  const [selectedRunPath, setSelectedRunPath] = useState(runPathOptions[0]?.key ?? "");
+  const selectedRunOption = runPathOptions.find((option) => option.key === selectedRunPath) ?? runPathOptions[0];
+  const hasManualRuns = manualCommands.length > 0;
+  const hasActiveManualRun = Object.values(commandRuns ?? {}).some(isRunningStatus);
+  const selectedRun = selectedRunOption?.isManual ? commandRuns?.[selectedRunOption.command] : undefined;
+  const isSelectedRunning = isRunningStatus(selectedRun);
+  const hasActiveRun = Boolean(isRunning || hasActiveManualRun);
   const hasRuntimeProfileFields = Boolean(profile || runnability?.autoCommand || manualCommands.length > 0);
 
   if (!hasRuntimeProfileFields) {
     return null;
   }
 
+  function runSelectedPath() {
+    if (!selectedRunOption) {
+      return;
+    }
+
+    if (selectedRunOption.isManual && selectedRunOption.manualCommand) {
+      onRunManualCommand?.(selectedRunOption.manualCommand);
+      return;
+    }
+
+    onRunAuto?.(selectedRunOption.command);
+  }
+
   return (
-    <Card className="mb-4 shadow-none">
-      <CardHeader className="gap-3 p-4">
-        <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-          <div>
-            <CardTitle className="flex items-center gap-2 text-base">
-              <TerminalSquare className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
-              Runtime profile
-            </CardTitle>
-            <p className="mt-1 text-sm leading-6 text-muted-foreground">
-              DevHub only runs commands inside BrowserPod. Backend profile data decides whether a repo gets an automatic preview or manual guidance.
-            </p>
-          </div>
-          <div className="flex shrink-0 flex-wrap gap-2">
+    <Card className="mb-4 overflow-hidden border-cyan-200/70 bg-card/95 shadow-none dark:border-cyan-900/50">
+      <CardHeader className="p-0">
+        <div className="flex flex-col gap-3 p-4 lg:flex-row lg:items-center lg:justify-between">
+          <button
+            type="button"
+            className="group flex min-w-0 flex-1 items-start gap-3 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+            aria-expanded={isOpen}
+            onClick={() => setIsOpen((open) => !open)}
+          >
+            <span className="mt-0.5 rounded-md border border-cyan-200 bg-cyan-50 p-2 text-cyan-700 dark:border-cyan-900 dark:bg-cyan-950 dark:text-cyan-300">
+              <TerminalSquare className="h-4 w-4" />
+            </span>
+            <span className="min-w-0 flex-1">
+              <CardTitle className="flex items-center gap-2 text-base">
+                Runtime profile
+                {isOpen ? <ChevronUp className="h-4 w-4 text-muted-foreground" /> : <ChevronDown className="h-4 w-4 text-muted-foreground" />}
+              </CardTitle>
+              <span className="mt-1 block text-sm leading-6 text-muted-foreground">
+                BrowserPod-only execution with compact run choices. Expand to choose the official path or inspect alternate sandbox runs.
+              </span>
+              {hasActiveRun && activeCommand && (
+                <span className="mt-2 block truncate font-mono text-xs text-foreground">{activeCommand}</span>
+              )}
+            </span>
+          </button>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             <Badge variant="outline">{projectKindLabel(profile?.projectKind)}</Badge>
             <Badge variant={profile?.supportLevel === "auto-preview" ? "success" : profile?.supportLevel === "manual-only" ? "warning" : "secondary"}>
               {supportLevelLabel(profile?.supportLevel)}
             </Badge>
+            {autoCommand ? <Badge variant="success">Official run available</Badge> : <Badge variant="secondary">No official auto-run</Badge>}
+            {hasManualRuns && <Badge variant="info">{alternateRunSummary(manualCommands.length)}</Badge>}
+            {hasActiveRun && <Badge variant="info">Running</Badge>}
+            {hasInspector && onOpenInspector && (
+              <Button type="button" variant="outline" size="sm" onClick={onOpenInspector}>
+                View run inspector
+              </Button>
+            )}
           </div>
         </div>
+        {runPathOptions.length > 0 && !isAnalysisOnly(runnability) && (
+          <div className="border-t border-border px-4 pb-4 pt-3">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+              <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
+                Run path
+                <select
+                  value={selectedRunOption?.key ?? ""}
+                  onChange={(event) => setSelectedRunPath(event.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 font-mono text-xs text-foreground shadow-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isBusy}
+                >
+                  {runPathOptions.map((option) => (
+                    <option key={option.key} value={option.key}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <Button
+                type="button"
+                variant={selectedRunOption?.isManual ? "outline" : "success"}
+                size="sm"
+                disabled={isBusy || hasActiveRun || isSelectedRunning || !selectedRunOption}
+                onClick={runSelectedPath}
+              >
+                <Play className="h-4 w-4" />
+                Run selected in BrowserPod
+              </Button>
+              {hasActiveRun && onStopRun && (
+                <Button type="button" variant="outline" size="sm" disabled={isBusy} onClick={onStopRun}>
+                  <Square className="h-4 w-4" />
+                  Stop current run
+                </Button>
+              )}
+            </div>
+          </div>
+        )}
       </CardHeader>
-      <CardContent className="space-y-4 p-4 pt-0 text-sm">
+      {isOpen && <CardContent className="space-y-4 border-t border-border p-4 text-sm">
         {autoCommand && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+          <div className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
             <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
-                <p className="font-semibold">Auto preview command</p>
+                <div className="mb-2 flex flex-wrap gap-2">
+                  <Badge variant="success">Official BrowserPod run</Badge>
+                  <Badge variant="info">opens preview</Badge>
+                </div>
                 <p className="mt-1 font-mono text-xs">{autoCommand}</p>
               </div>
               {onRunAuto && (
@@ -144,7 +287,7 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
               )}
             </div>
             <p className="leading-6 text-emerald-900/80 dark:text-emerald-100/80">
-              This project is expected to open a BrowserPod portal automatically.
+              This is the best automatic preview path from the backend runtime profile.
             </p>
           </div>
         )}
@@ -164,8 +307,8 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
         {manualCommands.length > 0 && (
           <div className="space-y-3">
             <div>
-              <h3 className="font-semibold">Manual sandbox commands</h3>
-              <p className="mt-1 text-muted-foreground">These are suggestions, not trusted commands. They run only inside BrowserPod.</p>
+              <h3 className="font-semibold">Alternate sandbox runs</h3>
+              <p className="mt-1 text-muted-foreground">Documentation, package scripts, and AI-inferred options. They are suggestions, not trusted commands.</p>
             </div>
             <div className="grid gap-3 lg:grid-cols-2">
               {manualCommands.map((command) => {
@@ -181,7 +324,7 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
                       <Badge variant={command.confidence === "high" ? "success" : command.confidence === "medium" ? "warning" : "secondary"}>
                         {command.confidence ?? "low"} confidence
                       </Badge>
-                      {command.previewExpected && <Badge variant="info">preview</Badge>}
+                      <Badge variant={command.previewExpected ? "info" : "secondary"}>{command.previewExpected ? "opens preview" : "console-only"}</Badge>
                     </div>
                     <p className="font-medium text-foreground">{label}</p>
                     <p className="mt-1 break-words font-mono text-xs text-foreground">{command.command}</p>
@@ -243,23 +386,39 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
           </div>
         )}
 
-        {profile?.reasoning && (
-          <div className="rounded-md border border-border bg-muted/30 p-3 leading-6 text-muted-foreground">
-            <span className="font-semibold text-foreground">Reasoning: </span>{profile.reasoning}
-          </div>
-        )}
+        {(profile?.reasoning || (profile?.evidence && profile.evidence.length > 0)) && (
+          <div className="rounded-md border border-border bg-muted/30">
+            <button
+              type="button"
+              className="flex w-full items-center justify-between px-3 py-2 text-left text-sm font-semibold hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+              aria-expanded={areDetailsOpen}
+              onClick={() => setAreDetailsOpen((open) => !open)}
+            >
+              Runtime details
+            </button>
+            {areDetailsOpen && (
+              <div className="space-y-3 border-t border-border p-3">
+                {profile.reasoning && (
+                  <div className="leading-6 text-muted-foreground">
+                    <span className="font-semibold text-foreground">Reasoning: </span>{profile.reasoning}
+                  </div>
+                )}
 
-        {profile?.evidence && profile.evidence.length > 0 && (
-          <div className="space-y-2">
-            <h3 className="font-semibold">Runtime evidence</h3>
-            <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
-              {profile.evidence.map((item) => (
-                <li key={item}>{item}</li>
-              ))}
-            </ul>
+                {profile.evidence && profile.evidence.length > 0 && (
+                  <div className="space-y-2">
+                    <h3 className="font-semibold">Runtime evidence</h3>
+                    <ul className="list-disc space-y-1 pl-5 text-muted-foreground">
+                      {profile.evidence.map((item) => (
+                        <li key={item}>{item}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
-      </CardContent>
+      </CardContent>}
     </Card>
   );
 }
