@@ -17,6 +17,7 @@ import { ExtractionProgressLine } from "@/components/ai/ExtractionProgressLine";
 import { FunctionsViewer } from "@/components/ai/FunctionsViewer";
 import { SecurityOverview } from "@/components/ai/SecurityOverview";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ResponsiveChatLayout } from "@/components/layout/ResponsiveChatLayout";
 import { FileTree } from "@/components/repo/FileTree";
 import { FileViewer } from "@/components/repo/FileViewer";
 import { PortalPreview } from "@/components/repo/PortalPreview";
@@ -646,7 +647,7 @@ export function RepoPage() {
   }, [fileError, isFileLoading, selectedPath, selectFile, snapshot.state]);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 xl:max-w-[104rem] xl:pr-[25rem]">
+    <main className="mx-auto max-w-[104rem] px-4 py-6 sm:px-6 lg:px-8">
       <Dialog open={isSecurityConfirmOpen} onOpenChange={(open) => {
         setIsSecurityConfirmOpen(open);
         if (!open) {
@@ -678,128 +679,146 @@ export function RepoPage() {
           </DialogFooter>
         </DialogContent>
       </Dialog>
-      <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-        <div className="min-w-0">
-          <Button variant="ghost" size="sm" asChild className="mb-3">
-            <Link to={`/workspace/${repo?.workspaceId ?? workspaceId}`}>
-              <ArrowLeft className="h-4 w-4" />
-              Workspace
-            </Link>
-          </Button>
-          {isLoading ? (
-            <Skeleton className="h-8 w-64" />
-          ) : (
-            <h1 className="truncate text-2xl font-semibold tracking-normal">{repo?.name ?? "Repo"}</h1>
-          )}
-          <div className="mt-2 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
-            {repo?.githubUrl ? (
-              <a
-                href={repo.githubUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="truncate text-sm text-muted-foreground transition-colors hover:text-foreground"
-              >
-                {repo.githubUrl}
-              </a>
-            ) : (
-              <Skeleton className="h-4 w-80 max-w-full" />
-            )}
-            <ExtractionProgressLine repo={repo} extraction={extraction} />
+
+      <ResponsiveChatLayout
+        mainLabel="Repository workbench"
+        chatLabel="Repo AI chat"
+        chatTitle="Repo AI"
+        chatClassName="xl:h-[min(44rem,calc(100vh-7rem))]"
+        chat={repoId ? (
+          <ChatPanel
+            scope={{ type: "repo", id: repoId }}
+            title="Repo AI"
+            className="h-full min-h-[30rem] border-cyan-200/70 bg-background/95 shadow-[0_22px_70px_rgba(8,47,73,0.14)] backdrop-blur dark:border-cyan-900/60"
+          />
+        ) : (
+          <Skeleton className="min-h-[30rem] rounded-2xl xl:h-full" />
+        )}
+      >
+        <div className="rounded-2xl border border-border/70 bg-card/80 p-5 shadow-sm">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+            <div className="min-w-0">
+              <Button variant="ghost" size="sm" asChild className="mb-3">
+                <Link to={`/workspace/${repo?.workspaceId ?? workspaceId}`}>
+                  <ArrowLeft className="h-4 w-4" />
+                  Workspace
+                </Link>
+              </Button>
+              {isLoading ? (
+                <Skeleton className="h-8 w-64" />
+              ) : (
+                <h1 className="truncate text-2xl font-semibold tracking-normal">{repo?.name ?? "Repo"}</h1>
+              )}
+              <div className="mt-2 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+                {repo?.githubUrl ? (
+                  <a
+                    href={repo.githubUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="truncate text-sm text-muted-foreground transition-colors hover:text-foreground"
+                  >
+                    {repo.githubUrl}
+                  </a>
+                ) : (
+                  <Skeleton className="h-4 w-80 max-w-full" />
+                )}
+                <ExtractionProgressLine repo={repo} extraction={extraction} />
+              </div>
+            </div>
+
+            <div className="flex flex-wrap items-center gap-2">
+              <Button variant="outline" size="icon" onClick={() => setIsSidebarOpen((open) => !open)} title="Toggle file tree">
+                <Menu className="h-4 w-4" />
+              </Button>
+              <RunnabilityBadge result={effectiveRunnability} />
+              <RunButton
+                canRun={Boolean(autoPreviewCommand)}
+                isRunning={isRunning}
+                isBusy={isBusy}
+                label={safeRunLabel}
+                onRun={() => void handleRun()}
+                onStop={() => void handleStop()}
+              />
+              {canManualOverride && !isRunning && (
+                <Button variant="outline" size="sm" disabled={isBusy} onClick={() => void handleRun(false, true)}>
+                  Run with manual override
+                </Button>
+              )}
+              {portalUrl && (
+                <Button variant="outline" size="sm" asChild>
+                  <a href={portalUrl} target="_blank" rel="noreferrer">
+                    <ExternalLink className="h-4 w-4" />
+                    Portal
+                  </a>
+                </Button>
+              )}
+              <Button variant="outline" size="sm" onClick={() => setActiveTab("ai-readme")}>
+                <Bot className="h-4 w-4" />
+                AI Readme
+              </Button>
+            </div>
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center gap-2">
-          <Button variant="outline" size="icon" onClick={() => setIsSidebarOpen((open) => !open)} title="Toggle file tree">
-            <Menu className="h-4 w-4" />
-          </Button>
-          <RunnabilityBadge result={effectiveRunnability} />
-          <RunButton
-            canRun={Boolean(autoPreviewCommand)}
-            isRunning={isRunning}
+        {(error || bootstrapError) && (
+          <Alert className="mb-4 border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
+            <AlertTitle>Repo is not ready</AlertTitle>
+            <AlertDescription>
+              <p>{error ?? bootstrapError}</p>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                onClick={() => {
+                  bootedRepoRef.current = undefined;
+                  setBootAttempt((attempt) => attempt + 1);
+                  void refresh();
+                }}
+              >
+                <RotateCw className="h-4 w-4" />
+                Retry
+              </Button>
+            </AlertDescription>
+          </Alert>
+        )}
+
+        {!error && (
+          <RuntimeProfileCard
+            runnability={effectiveRunnability}
             isBusy={isBusy}
-            label={safeRunLabel}
-            onRun={() => void handleRun()}
-            onStop={() => void handleStop()}
+            commandRuns={manualCommandRuns}
+            terminalLines={snapshot.terminal}
+            onRunAuto={handleAutoCommand}
+            onRunManualCommand={handleManualCommand}
+            onStopManualCommand={handleStopManualCommand}
           />
-          {canManualOverride && !isRunning && (
-            <Button variant="outline" size="sm" disabled={isBusy} onClick={() => void handleRun(false, true)}>
-              Run with manual override
-            </Button>
-          )}
-          {portalUrl && (
-            <Button variant="outline" size="sm" asChild>
-              <a href={portalUrl} target="_blank" rel="noreferrer">
-                <ExternalLink className="h-4 w-4" />
-                Portal
-              </a>
-            </Button>
-          )}
-          <Button variant="outline" size="sm" onClick={() => setActiveTab("ai-readme")}>
-            <Bot className="h-4 w-4" />
-            AI Readme
-          </Button>
-        </div>
-      </div>
+        )}
 
-      {(error || bootstrapError) && (
-        <Alert className="mb-4 border-red-200 bg-red-50 text-red-700 dark:border-red-900 dark:bg-red-950 dark:text-red-300">
-          <AlertTitle>Repo is not ready</AlertTitle>
-          <AlertDescription>
-            <p>{error ?? bootstrapError}</p>
-            <Button
-              variant="outline"
-              size="sm"
-              className="mt-3"
-              onClick={() => {
-                bootedRepoRef.current = undefined;
-                setBootAttempt((attempt) => attempt + 1);
-                void refresh();
-              }}
-            >
-              <RotateCw className="h-4 w-4" />
-              Retry
-            </Button>
-          </AlertDescription>
-        </Alert>
-      )}
+        {!error && (
+          <div
+            className={cn(
+              "grid gap-4",
+              isSidebarOpen ? "lg:grid-cols-[minmax(16rem,20rem)_1fr]" : "lg:grid-cols-[1fr]",
+            )}
+          >
+            {isSidebarOpen && (
+              <aside className="min-h-[36rem] overflow-hidden rounded-2xl border border-border/70 bg-card/80 shadow-sm">
+                {isTreeLoading ? (
+                  <SectionLoading
+                    title="Loading file tree"
+                    message={repoLoadingMessage}
+                    percent={repoLoadingPercent}
+                    detail={latestTerminalLine ?? repo?.githubUrl}
+                    className="min-h-[36rem] rounded-none border-0"
+                  />
+                ) : (
+                  <FileTree tree={effectiveFileTree} selectedPath={selectedPath} onSelectFile={selectFile} />
+                )}
+              </aside>
+            )}
 
-      {!error && (
-        <RuntimeProfileCard
-          runnability={effectiveRunnability}
-          isBusy={isBusy}
-          commandRuns={manualCommandRuns}
-          terminalLines={snapshot.terminal}
-          onRunAuto={handleAutoCommand}
-          onRunManualCommand={handleManualCommand}
-          onStopManualCommand={handleStopManualCommand}
-        />
-      )}
-
-      {!error && (
-        <div
-          className={cn(
-            "grid gap-4",
-            isSidebarOpen ? "lg:grid-cols-[minmax(16rem,20rem)_1fr]" : "lg:grid-cols-[1fr]",
-          )}
-        >
-          {isSidebarOpen && (
-            <aside className="min-h-[36rem] overflow-hidden rounded-lg border border-border bg-background">
-              {isTreeLoading ? (
-                <SectionLoading
-                  title="Loading file tree"
-                  message={repoLoadingMessage}
-                  percent={repoLoadingPercent}
-                  detail={latestTerminalLine ?? repo?.githubUrl}
-                  className="min-h-[36rem] rounded-none border-0"
-                />
-              ) : (
-                <FileTree tree={effectiveFileTree} selectedPath={selectedPath} onSelectFile={selectFile} />
-              )}
-            </aside>
-          )}
-
-          <section className="min-w-0">
-            <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
+            <section className="min-w-0">
+              <Tabs value={activeTab} onValueChange={setActiveTab} className="w-full">
               <div className="overflow-x-auto">
                 <TabsList className="mb-2">
                   <TabsTrigger value="code">Code</TabsTrigger>
@@ -824,7 +843,7 @@ export function RepoPage() {
                 />
               </TabsContent>
 
-              <TabsContent value="ai-readme" className="min-h-[36rem] rounded-lg border border-border bg-background">
+              <TabsContent value="ai-readme" className="min-h-[36rem] rounded-2xl border border-border/70 bg-card/80 shadow-sm">
                 <AiReadmeViewer
                   readme={aiReadme}
                   isLoading={isAiLoading || (!aiReadme && isExtractionInFlight)}
@@ -834,7 +853,7 @@ export function RepoPage() {
                 />
               </TabsContent>
 
-              <TabsContent value="functions" className="min-h-[36rem] rounded-lg border border-border bg-background">
+              <TabsContent value="functions" className="min-h-[36rem] rounded-2xl border border-border/70 bg-card/80 shadow-sm">
                 <FunctionsViewer
                   extraction={extraction}
                   isLoading={isAiLoading || (!extraction && isExtractionInFlight)}
@@ -859,7 +878,7 @@ export function RepoPage() {
                 />
               </TabsContent>
 
-              <TabsContent value="security" className="min-h-[36rem] rounded-lg border border-border bg-background">
+              <TabsContent value="security" className="min-h-[36rem] rounded-2xl border border-border/70 bg-card/80 shadow-sm">
                 <SecurityOverview
                   extraction={extraction}
                   runnability={effectiveRunnability}
@@ -877,16 +896,18 @@ export function RepoPage() {
 
             </Tabs>
 
-            <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
+            <section className="mt-4 overflow-hidden rounded-2xl border border-border/70 bg-card/80 shadow-sm">
               <button
                 type="button"
-                className="flex h-11 w-full items-center justify-between px-4 text-sm font-medium hover:bg-accent"
+                className="flex h-11 w-full items-center justify-between px-4 text-sm font-medium transition-colors hover:bg-accent focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
                 onClick={() => setIsConsoleOpen((open) => !open)}
+                aria-expanded={isConsoleOpen}
+                aria-controls="repo-console-output"
               >
                 <span>Console</span>
                 {isConsoleOpen ? <ChevronUp className="h-4 w-4" /> : <ChevronDown className="h-4 w-4" />}
               </button>
-              <div className={cn("border-t border-border", !isConsoleOpen && "h-0 overflow-hidden border-t-0")}>
+              <div id="repo-console-output" className={cn("border-t border-border", !isConsoleOpen && "h-0 overflow-hidden border-t-0")}>
                 <div className="max-h-64 overflow-auto bg-black p-3 font-mono text-xs text-zinc-100">
                   <div ref={terminalRef} className="min-h-40" />
                   {snapshot.terminal.map((line) => (
@@ -907,20 +928,7 @@ export function RepoPage() {
           </section>
         </div>
       )}
-
-      {!error && (
-        <aside className="mt-4 xl:fixed xl:right-6 xl:top-1/2 xl:z-40 xl:mt-0 xl:w-[22rem] xl:-translate-y-1/2">
-          {repoId ? (
-            <ChatPanel
-              scope={{ type: "repo", id: repoId }}
-              title="Repo AI"
-              className="min-h-[34rem] border-cyan-200/70 bg-background/95 shadow-[0_22px_70px_rgba(8,47,73,0.18)] backdrop-blur xl:h-[min(42rem,calc(100vh-7rem))] xl:min-h-0 dark:border-cyan-900/60"
-            />
-          ) : (
-            <Skeleton className="min-h-[34rem] rounded-lg xl:h-[min(42rem,calc(100vh-7rem))]" />
-          )}
-        </aside>
-      )}
+      </ResponsiveChatLayout>
     </main>
   );
 }

@@ -108,7 +108,7 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
   }
 
   return (
-    <Card className="mb-4 shadow-none">
+    <Card className="rounded-2xl border-border/70 bg-card/80 shadow-sm">
       <CardHeader className="gap-3 p-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
           <div>
@@ -130,7 +130,7 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
       </CardHeader>
       <CardContent className="space-y-4 p-4 pt-0 text-sm">
         {autoCommand && (
-          <div className="rounded-md border border-emerald-200 bg-emerald-50 p-3 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-emerald-950 dark:border-emerald-900 dark:bg-emerald-950 dark:text-emerald-100">
             <div className="mb-2 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <p className="font-semibold">Auto preview command</p>
@@ -150,13 +150,13 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
         )}
 
         {isManualOnly(runnability) && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 p-3 leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
+          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 leading-6 text-amber-900 dark:border-amber-900 dark:bg-amber-950 dark:text-amber-100">
             {manualOnlyMessage(runnability)}
           </div>
         )}
 
         {isAnalysisOnly(runnability) && (
-          <div className="rounded-md border border-border bg-muted/40 p-3 leading-6 text-muted-foreground">
+          <div className="rounded-xl border border-border bg-muted/40 p-3 leading-6 text-muted-foreground">
             {analysisOnlyMessage(runnability)}
           </div>
         )}
@@ -175,7 +175,7 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
                 const isCommandRunning = isRunningStatus(run);
 
                 return (
-                  <div key={command.command} className="rounded-md border border-border bg-background p-3">
+                  <div key={command.command} className="rounded-xl border border-border/70 bg-background/80 p-3">
                     <div className="mb-2 flex flex-wrap items-center gap-2">
                       <Badge variant="outline">{command.source ?? "unknown"}</Badge>
                       <Badge variant={command.confidence === "high" ? "success" : command.confidence === "medium" ? "warning" : "secondary"}>
@@ -244,7 +244,7 @@ export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalL
         )}
 
         {profile?.reasoning && (
-          <div className="rounded-md border border-border bg-muted/30 p-3 leading-6 text-muted-foreground">
+          <div className="rounded-xl border border-border bg-muted/30 p-3 leading-6 text-muted-foreground">
             <span className="font-semibold text-foreground">Reasoning: </span>{profile.reasoning}
           </div>
         )}

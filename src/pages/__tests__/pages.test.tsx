@@ -101,6 +101,19 @@ const mockedUsePod = vi.mocked(usePod);
 const mockedStopRegisteredPod = vi.mocked(stopRegisteredPod);
 const mockedApi = vi.mocked(api);
 
+function mockDesktopLayout() {
+  vi.mocked(window.matchMedia).mockReturnValue({
+    matches: true,
+    media: "(min-width: 1280px)",
+    onchange: null,
+    addListener: vi.fn(),
+    removeListener: vi.fn(),
+    addEventListener: vi.fn(),
+    removeEventListener: vi.fn(),
+    dispatchEvent: vi.fn(),
+  });
+}
+
 function repoHook(overrides: Partial<ReturnType<typeof useRepo>> = {}) {
   return {
     repo: makeRepo(),
@@ -164,6 +177,7 @@ function renderWithRouter(path: string, element: ReactElement, includeRepoTarget
 }
 
 beforeEach(() => {
+  mockDesktopLayout();
   mockedUseWorkspaces.mockReturnValue({
     workspaces: [makeWorkspace()],
     isLoading: false,

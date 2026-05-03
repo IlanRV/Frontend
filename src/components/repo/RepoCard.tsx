@@ -53,7 +53,7 @@ export function RepoCard({ repo, active, onOpen, onRun, onStop, isStopping, onDe
       onClick={onOpen}
       onKeyDown={handleKeyDown}
       className={cn(
-        "w-full rounded-lg border border-border bg-card p-4 text-left transition-colors hover:border-primary/60 hover:bg-accent/40 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+        "w-full rounded-xl border border-border/70 bg-background/80 p-4 text-left shadow-sm transition-colors hover:border-primary/50 hover:bg-accent/30 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
         active && "border-primary/70 bg-accent/50",
       )}
     >

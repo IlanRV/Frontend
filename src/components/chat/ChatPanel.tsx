@@ -108,22 +108,23 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
 
   return (
     <section
+      aria-label={title}
       className={cn(
-        "flex min-h-[30rem] flex-col overflow-hidden rounded-lg border border-border bg-background",
+        "flex min-h-[30rem] flex-col overflow-hidden rounded-2xl border border-border/70 bg-card/95 shadow-sm",
         className,
       )}
     >
-      <div className="flex h-14 items-center justify-between border-b border-border px-4">
+      <div className="flex h-14 items-center justify-between border-b border-border/70 px-4">
         <div className="flex items-center gap-2">
           <MessageSquare className="h-4 w-4 text-cyan-600 dark:text-cyan-300" />
           <h2 className="text-sm font-semibold">{title}</h2>
         </div>
-        <Button variant="ghost" size="icon" onClick={() => void loadMessages()} title="Reload chat">
+        <Button variant="ghost" size="icon" onClick={() => void loadMessages()} title="Reload chat" aria-label="Reload chat">
           <RotateCw className="h-4 w-4" />
         </Button>
       </div>
 
-      <div className="flex-1 space-y-4 overflow-y-auto p-4">
+      <div className="flex-1 space-y-4 overflow-y-auto p-4 leading-6">
         {isLoading && (
           <div className="space-y-4">
             <Skeleton className="h-16 w-4/5" />

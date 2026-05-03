@@ -4,6 +4,7 @@ import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ResponsiveChatLayout } from "@/components/layout/ResponsiveChatLayout";
 import { AddRepoModal } from "@/components/repo/AddRepoModal";
 import { RepoCard } from "@/components/repo/RepoCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
@@ -93,8 +94,9 @@ export function WorkspacePage() {
   }
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
-      <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+    <main className="mx-auto max-w-[104rem] px-4 py-6 sm:px-6 lg:px-8">
+      <div className="mb-5 rounded-2xl border border-border/70 bg-card/80 p-5 shadow-sm">
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
         <div>
           <Button variant="ghost" size="sm" asChild className="mb-3">
             <Link to="/dashboard">
@@ -120,6 +122,7 @@ export function WorkspacePage() {
           <Plus className="h-4 w-4" />
           Add Repo
         </Button>
+        </div>
       </div>
 
       {error && (
@@ -136,20 +139,37 @@ export function WorkspacePage() {
       )}
 
       {!error && (
-        <div className="grid gap-4 lg:grid-cols-[minmax(18rem,24rem)_1fr]">
-          <section className="min-h-[36rem] rounded-lg border border-border bg-background">
-            <div className="flex h-14 items-center justify-between border-b border-border px-4">
-              <h2 className="text-sm font-semibold">Repositories</h2>
+        <ResponsiveChatLayout
+          mainLabel="Workspace repositories"
+          chatLabel="Workspace AI chat"
+          chatTitle="Workspace AI"
+          chatClassName="xl:h-[min(42rem,calc(100vh-7rem))]"
+          chat={workspace ? (
+            <ChatPanel
+              scope={{ type: "workspace", id: workspace.id }}
+              title="Workspace AI"
+              className="h-full min-h-[30rem]"
+            />
+          ) : (
+            <Skeleton className="min-h-[30rem] rounded-2xl xl:h-full" />
+          )}
+        >
+          <section className="min-h-[36rem] rounded-2xl border border-border/70 bg-card/80 shadow-sm">
+            <div className="flex flex-col gap-2 border-b border-border/70 px-5 py-4 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h2 className="text-sm font-semibold">Repositories</h2>
+                <p className="mt-1 text-xs text-muted-foreground">Open, run, or manage repos in this workspace.</p>
+              </div>
               <span className="text-xs text-muted-foreground">{repos.length} total</span>
             </div>
-            <div className="space-y-3 p-3">
+            <div className="grid gap-3 p-3 md:grid-cols-2 2xl:grid-cols-3">
               {isLoading &&
                 Array.from({ length: 4 }).map((_, index) => (
                   <Skeleton key={index} className="h-32" />
                 ))}
 
               {!isLoading && repos.length === 0 && (
-                <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
+                <div className="flex min-h-64 items-center justify-center rounded-2xl border border-dashed border-border bg-muted/30 p-6 text-center md:col-span-2 2xl:col-span-3">
                   <div>
                     <h3 className="text-sm font-semibold">No repos yet</h3>
                     <p className="mt-2 text-sm text-muted-foreground">Add your first repo!</p>
@@ -176,17 +196,7 @@ export function WorkspacePage() {
                 ))}
             </div>
           </section>
-
-          {workspace ? (
-            <ChatPanel
-              scope={{ type: "workspace", id: workspace.id }}
-              title="Workspace AI"
-              className="min-h-[36rem]"
-            />
-          ) : (
-            <Skeleton className="min-h-[36rem]" />
-          )}
-        </div>
+        </ResponsiveChatLayout>
       )}
 
       <AddRepoModal
