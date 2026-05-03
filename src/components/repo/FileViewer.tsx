@@ -1,6 +1,8 @@
 import Editor from "@monaco-editor/react";
 import { Loader2, RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -30,6 +32,10 @@ function languageForPath(path?: string) {
   if (path.endsWith(".yml") || path.endsWith(".yaml")) return "yaml";
   if (path.endsWith(".env") || path.endsWith(".gitignore")) return "shell";
   return "plaintext";
+}
+
+function isMarkdownPath(path?: string) {
+  return Boolean(path && /\.mdx?$/i.test(path));
 }
 
 function useEditorTheme() {
@@ -88,6 +94,21 @@ export function FileViewer({ path, content, isLoading, error, onRetry }: FileVie
     return (
       <div className="flex h-full min-h-[28rem] items-center justify-center text-center text-sm text-muted-foreground">
         Select a supported file from the tree.
+      </div>
+    );
+  }
+
+  if (isMarkdownPath(path)) {
+    return (
+      <div className="flex h-[calc(100vh-18rem)] min-h-[36rem] flex-col overflow-hidden rounded-lg border border-border bg-background">
+        <div className="flex h-10 shrink-0 items-center border-b border-border bg-muted/40 px-3 text-xs text-muted-foreground">
+          <span className="truncate">{path}</span>
+        </div>
+        <article className="min-h-0 flex-1 overflow-auto p-5">
+          <div className="markdown-body">
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+          </div>
+        </article>
       </div>
     );
   }

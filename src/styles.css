@@ -159,4 +159,45 @@
   .markdown-body hr {
     @apply my-6 border-border;
   }
+
+  .chat-markdown {
+    @apply text-sm leading-6 text-card-foreground;
+  }
+
+  .chat-markdown > *:first-child {
+    @apply mt-0;
+  }
+
+  .chat-markdown > *:last-child {
+    @apply mb-0;
+  }
+
+  .chat-markdown p {
+    @apply my-2;
+  }
+
+  .chat-markdown ul,
+  .chat-markdown ol {
+    @apply my-2 space-y-1 pl-5;
+  }
+
+  .chat-markdown ul {
+    @apply list-disc;
+  }
+
+  .chat-markdown ol {
+    @apply list-decimal;
+  }
+
+  .chat-markdown code {
+    @apply rounded border border-border bg-muted px-1 py-0.5 font-mono text-xs;
+  }
+
+  .chat-markdown pre {
+    @apply my-3 overflow-x-auto rounded-md border border-border bg-zinc-950 p-3 text-zinc-100;
+  }
+
+  .chat-markdown pre code {
+    @apply border-0 bg-transparent p-0 text-zinc-100;
+  }
 }

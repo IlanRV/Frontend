@@ -8,11 +8,13 @@ import {
   RotateCw,
 } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Link, useParams, useSearchParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams, useSearchParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { AiReadmeViewer } from "@/components/ai/AiReadmeViewer";
+import { ExtractionProgressLine } from "@/components/ai/ExtractionProgressLine";
 import { FunctionsViewer } from "@/components/ai/FunctionsViewer";
+import { SecurityOverview } from "@/components/ai/SecurityOverview";
 import { ChatPanel } from "@/components/chat/ChatPanel";
 import { FileTree } from "@/components/repo/FileTree";
 import { FileViewer } from "@/components/repo/FileViewer";
@@ -88,6 +90,8 @@ function setStoredRunIntent(repoId: string, isRunning: boolean) {
 
 export function RepoPage() {
   const { id: workspaceId, repoId } = useParams<{ id: string; repoId: string }>();
+  const location = useLocation();
+  const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const {
     repo,
@@ -107,6 +111,8 @@ export function RepoPage() {
     terminalRef,
     snapshot,
     bootstrapRepo,
+    bootstrapRepoFiles,
+    checkRunnability,
     collectAiExtractionPayload,
     readFile,
     runProject,
@@ -128,6 +134,7 @@ export function RepoPage() {
   const autoRunRef = useRef(false);
   const registeredPortalRef = useRef<string | undefined>();
   const aiReadmeRequestRef = useRef<string | undefined>();
+  const securityRescanRequestRef = useRef<string | undefined>();
   const activeRepoRef = useRef<string | undefined>();
 
   useEffect(() => {
@@ -146,7 +153,16 @@ export function RepoPage() {
     autoRunRef.current = false;
     registeredPortalRef.current = undefined;
     aiReadmeRequestRef.current = undefined;
+    securityRescanRequestRef.current = undefined;
   }, [repoId]);
+
+  useEffect(() => {
+    if (!repo?.workspaceId || !workspaceId || repo.workspaceId === workspaceId) {
+      return;
+    }
+
+    navigate(`/workspace/${repo.workspaceId}/repo/${repo.id}${location.search}`, { replace: true });
+  }, [location.search, navigate, repo?.id, repo?.workspaceId, workspaceId]);
 
   const selectFile = useCallback(
     async (path: string) => {
@@ -264,12 +280,12 @@ export function RepoPage() {
     bootedRepoRef.current = repo.id;
     setBootstrapError(undefined);
 
-    void bootstrapRepo(repo.githubUrl)
-      .then(({ fileTree: nextTree, runnability }) => {
+    void bootstrapRepoFiles(repo.githubUrl)
+      .then((nextTree) => {
         setFileTree(nextTree);
         saveCachedFileTree(repo.id, nextTree);
 
-        const shouldSyncExtraction = repo.status === "cloning" || (!repo.analysis && !repo.aiReadme);
+        const shouldSyncExtraction = repo.status === "cloning" || (!repo.analysis && !repo.aiReadme) || !repo.analysis?.security;
 
         if (shouldSyncExtraction) {
           void collectAiExtractionPayload(nextTree)
@@ -279,29 +295,35 @@ export function RepoPage() {
 
         if (!autoRunRef.current && shouldRestoreRun) {
           autoRunRef.current = true;
-          if (runnability.canRun && runnability.entryPoint) {
-            void runProject(runnability.entryPoint)
+          void checkRunnability()
+            .then((runnability) => {
+              if (!runnability.canRun || !runnability.entryPoint) {
+                setStoredRunIntent(repo.id, false);
+                return;
+              }
+
+              return runProject(runnability.entryPoint)
               .then(() => {
                 setStoredRunIntent(repo.id, true);
                 setActiveTab("live");
                 setIsConsoleOpen(true);
-              })
-              .catch((runError: unknown) => {
-                setBootstrapError(runError instanceof Error ? runError.message : "Unable to restore BrowserPod run");
               });
-          }
+            })
+            .catch((runError: unknown) => {
+              setBootstrapError(runError instanceof Error ? runError.message : "Unable to restore BrowserPod run");
+            });
         }
       })
       .catch((bootError: unknown) => {
         bootedRepoRef.current = undefined;
         setBootstrapError(bootError instanceof Error ? bootError.message : "Unable to prepare BrowserPod");
       });
-  }, [bootAttempt, bootstrapRepo, collectAiExtractionPayload, repo, runProject, searchParams, selectFile]);
+  }, [bootAttempt, bootstrapRepoFiles, checkRunnability, collectAiExtractionPayload, repo, runProject, searchParams, selectFile]);
 
   useEffect(() => {
-    const needsExtraction = activeTab === "functions" ? !extraction : !aiReadme;
+    const needsExtraction = activeTab === "functions" || activeTab === "security" ? !extraction : !aiReadme;
 
-    if ((activeTab !== "ai-readme" && activeTab !== "functions") || !repoId || !needsExtraction || isAiLoading) {
+    if ((activeTab !== "ai-readme" && activeTab !== "functions" && activeTab !== "security") || !repoId || !needsExtraction || isAiLoading) {
       return;
     }
 
@@ -314,6 +336,29 @@ export function RepoPage() {
     aiReadmeRequestRef.current = requestKey;
     void loadExtraction();
   }, [activeTab, aiReadme, extraction, isAiLoading, loadExtraction, repo?.status, repoId]);
+
+  useEffect(() => {
+    if (activeTab !== "security" || !repoId || extraction?.security || repo?.status === "analyzing") {
+      return;
+    }
+
+    const requestKey = `${repoId}:${repo?.analysisUpdatedAt ?? repo?.updatedAt ?? repo?.status ?? "unknown"}`;
+
+    if (securityRescanRequestRef.current === requestKey) {
+      return;
+    }
+
+    securityRescanRequestRef.current = requestKey;
+    void api.ai.extractStored(repoId)
+      .then(() => {
+        toast.success("Security scan started from cached repo files");
+        void refresh();
+        void loadExtraction();
+      })
+      .catch(() => {
+        void loadExtraction();
+      });
+  }, [activeTab, extraction?.security, loadExtraction, refresh, repo?.analysisUpdatedAt, repo?.status, repo?.updatedAt, repoId]);
 
   useEffect(() => {
     if (!snapshot.portalUrl || registeredPortalRef.current === snapshot.portalUrl) {
@@ -376,7 +421,7 @@ export function RepoPage() {
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <Button variant="ghost" size="sm" asChild className="mb-3">
-            <Link to={`/workspace/${workspaceId}`}>
+            <Link to={`/workspace/${repo?.workspaceId ?? workspaceId}`}>
               <ArrowLeft className="h-4 w-4" />
               Workspace
             </Link>
@@ -386,7 +431,21 @@ export function RepoPage() {
           ) : (
             <h1 className="truncate text-2xl font-semibold tracking-normal">{repo?.name ?? "Repo"}</h1>
           )}
-          <p className="mt-2 truncate text-sm text-muted-foreground">{repo?.githubUrl}</p>
+          <div className="mt-2 flex min-w-0 flex-col gap-2 sm:flex-row sm:items-center">
+            {repo?.githubUrl ? (
+              <a
+                href={repo.githubUrl}
+                target="_blank"
+                rel="noreferrer"
+                className="truncate text-sm text-muted-foreground transition-colors hover:text-foreground"
+              >
+                {repo.githubUrl}
+              </a>
+            ) : (
+              <Skeleton className="h-4 w-80 max-w-full" />
+            )}
+            <ExtractionProgressLine repo={repo} extraction={extraction} />
+          </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-2">
@@ -468,6 +527,7 @@ export function RepoPage() {
                   <TabsTrigger value="ai-readme">AI Readme</TabsTrigger>
                   <TabsTrigger value="functions">Functions</TabsTrigger>
                   <TabsTrigger value="live">Live Preview</TabsTrigger>
+                  <TabsTrigger value="security">Security</TabsTrigger>
                   <TabsTrigger value="chat">Chat</TabsTrigger>
                 </TabsList>
               </div>
@@ -506,6 +566,18 @@ export function RepoPage() {
                   portalUrl={portalUrl}
                   previewPath={effectiveRunnability?.previewPath}
                   previewPaths={effectiveRunnability?.previewPaths}
+                />
+              </TabsContent>
+
+              <TabsContent value="security" className="min-h-[36rem] rounded-lg border border-border bg-background">
+                <SecurityOverview
+                  extraction={extraction}
+                  isLoading={isAiLoading || repo?.status === "analyzing"}
+                  error={aiError}
+                  onRetry={repoId ? () => void api.ai.extractStored(repoId).then(() => {
+                    void refresh();
+                    void loadExtraction();
+                  }) : undefined}
                 />
               </TabsContent>
 
