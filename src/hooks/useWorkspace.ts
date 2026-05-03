@@ -140,6 +140,10 @@ export function useWorkspace(workspaceId: string | undefined) {
     });
   }, []);
 
+  const deleteRepo = useCallback(async (_repoId: string) => {
+    throw new Error("Not implemented");
+  }, []);
+
   useEffect(() => {
     void refresh();
   }, [refresh]);
@@ -166,5 +170,6 @@ export function useWorkspace(workspaceId: string | undefined) {
     refresh,
     addRepo,
     updateRepo,
+    deleteRepo,
   };
 }

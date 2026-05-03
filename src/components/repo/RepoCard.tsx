@@ -14,6 +14,8 @@ interface RepoCardProps {
   onRun: () => void;
   onStop?: () => void;
   isStopping?: boolean;
+  onDelete?: () => void;
+  isDeleting?: boolean;
 }
 
 function statusVariant(status: RepoStatus) {
@@ -30,7 +32,7 @@ function statusVariant(status: RepoStatus) {
   }
 }
 
-export function RepoCard({ repo, active, onOpen, onRun, onStop, isStopping }: RepoCardProps) {
+export function RepoCard({ repo, active, onOpen, onRun, onStop, isStopping, onDelete: _onDelete, isDeleting: _isDeleting }: RepoCardProps) {
   const canRun = repo.runnability?.canRun ?? repo.runnable ?? false;
   const hasAiReadme = repo.aiReadmeStatus === "ready" || Boolean(repo.aiReadme);
   const isSandboxRunning = repo.status === "running" || Boolean(repo.portalUrl);

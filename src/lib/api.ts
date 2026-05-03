@@ -556,6 +556,9 @@ export const api = {
     getFile: (repoId: string, path: string) =>
       apiFetch<RepoFileResponse>(`/repos/${repoId}/file?path=${encodeURIComponent(path)}`),
     delete: (repoId: string) => apiFetch<void>(`/repos/${repoId}`, { method: "DELETE" }),
+    deleteFromWorkspace: async (_workspaceId: string, _repoId: string) => {
+      throw new Error("Not implemented");
+    },
     run: (repoId: string, portalUrl: string, options: RegisterRunOptions = {}) =>
       apiFetch<unknown>(`/repos/${repoId}/run`, {
         method: "POST",
