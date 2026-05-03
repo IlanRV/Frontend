@@ -202,7 +202,7 @@ describe("RunInspectionDialog", () => {
 
     expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
     expect(screen.getByText("Current command")).toBeInTheDocument();
-    expect(screen.getByText("Preview expected")).toBeInTheDocument();
+    expect(screen.queryByText("Preview expected")).not.toBeInTheDocument();
     expect(screen.getByTitle("BrowserPod live preview")).toHaveAttribute("src", "https://portal.example/docs");
     expect(screen.getByText("server ready")).toBeInTheDocument();
 
@@ -226,6 +226,26 @@ describe("RunInspectionDialog", () => {
     expect(screen.getByText("test output")).toBeInTheDocument();
     expect(screen.queryByTitle("BrowserPod live preview")).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Show QR code" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the inspector header clear of badge clutter and uses a blurred backdrop", () => {
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        portalUrl="https://portal.example"
+        command="npm run dev"
+        previewExpected
+        projectKind="api-server"
+        riskLevel="high"
+        runtimeEventCount={2}
+        terminalLines={[]}
+      />,
+    );
+
+    expect(screen.queryByText("API server")).not.toBeInTheDocument();
+    expect(screen.queryByText("High-risk repo")).not.toBeInTheDocument();
+    expect(document.querySelector(".backdrop-blur-sm")).toBeInTheDocument();
   });
 });
 
@@ -357,6 +377,34 @@ describe("RuntimeProfileCard", () => {
     await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
 
     expect(onOpenInspector).toHaveBeenCalledOnce();
+  });
+
+  it("lets users stop a running command before switching run paths", async () => {
+    const onStopRun = vi.fn();
+    render(<RuntimeProfileCard
+      runnability={makeRunnability({
+        autoCommand: "npm run dev",
+        runtimeProfile: makeRuntimeProfile({
+          autoCommand: "npm run dev",
+          manualCommands: [{ command: "npm test", label: "Run tests", source: "ai", confidence: "medium" }],
+        }),
+      })}
+      isRunning
+      activeCommand="npm run dev"
+      onRunAuto={vi.fn()}
+      onRunManualCommand={vi.fn()}
+      onStopRun={onStopRun}
+    />);
+
+    const select = screen.getByLabelText("Run path");
+    expect(select).not.toBeDisabled();
+    await userEvent.selectOptions(select, "manual-0");
+    expect(select).toHaveValue("manual-0");
+    expect(screen.getByRole("button", { name: "Run selected in BrowserPod" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop current run" }));
+
+    expect(onStopRun).toHaveBeenCalledOnce();
   });
 
   it("shows manual command status, output, and stop controls", async () => {

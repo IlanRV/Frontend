@@ -4,7 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ChatInput } from "@/components/chat/ChatInput";
 import { ChatMessage } from "@/components/chat/ChatMessage";
-import { ChatPanel } from "@/components/chat/ChatPanel";
+import { ChatPanel, clearChatPanelCache } from "@/components/chat/ChatPanel";
 import { api } from "@/lib/api";
 import { makeChatMessage } from "@/test/factories";
 
@@ -72,6 +72,7 @@ describe("ChatMessage", () => {
 
 describe("ChatPanel", () => {
   beforeEach(() => {
+    clearChatPanelCache();
     vi.spyOn(crypto, "randomUUID")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000001")
       .mockReturnValueOnce("00000000-0000-4000-8000-000000000002");
@@ -111,6 +112,25 @@ describe("ChatPanel", () => {
     expect(screen.getByText("What is this?")).toBeInTheDocument();
     await waitFor(() => expect(screen.getByText("Assistant reply")).toBeInTheDocument());
     expect(chatApi.sendRepo).toHaveBeenCalledWith("repo-1", "What is this?");
+  });
+
+  it("keeps repo chat history when another panel opens", async () => {
+    chatApi.getRepo.mockResolvedValueOnce([]);
+    chatApi.sendRepo.mockResolvedValueOnce({ reply: "Assistant reply" });
+
+    const { unmount } = render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
+
+    await waitFor(() => expect(screen.getByText("Start a conversation about the code in this context.")).toBeInTheDocument());
+    await userEvent.type(screen.getByPlaceholderText("Ask about this codebase..."), "Explain this repo");
+    await userEvent.click(screen.getByRole("button", { name: "Send message" }));
+    await waitFor(() => expect(screen.getByText("Assistant reply")).toBeInTheDocument());
+
+    unmount();
+    chatApi.getRepo.mockImplementationOnce(() => new Promise(() => undefined));
+    render(<ChatPanel scope={{ type: "repo", id: "repo-1" }} />);
+
+    expect(screen.getByText("Explain this repo")).toBeInTheDocument();
+    expect(screen.getByText("Assistant reply")).toBeInTheDocument();
   });
 
   it("removes optimistic messages when send fails", async () => {
