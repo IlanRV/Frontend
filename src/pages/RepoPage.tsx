@@ -367,6 +367,7 @@ export function RepoPage() {
               command: command.command,
               label: command.label ?? null,
               status: "failed",
+              outputStartedAt: new Date().toISOString(),
               finishedAt: new Date().toISOString(),
               message: "Command did not start.",
             },
@@ -379,6 +380,7 @@ export function RepoPage() {
           [command.command]: {
             ...current[command.command],
             status: "running",
+            outputStartedAt: new Date().toISOString(),
             message: previewExpected ? "Preview command is running in BrowserPod." : "Command is running in BrowserPod.",
           },
         }));

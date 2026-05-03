@@ -167,8 +167,35 @@ export function normalizeRunnabilityBlockers(runnability: RunnabilityResult | nu
   }));
 }
 
+function isBenignRuntimeUrl(value: string) {
+  return (
+    value.startsWith("https://rt.browserpod.io/") ||
+    value.startsWith("http://localhost") ||
+    value.startsWith("https://localhost") ||
+    value.startsWith("blob:http://localhost") ||
+    value.startsWith("blob:https://localhost") ||
+    value.startsWith("http://127.0.0.1") ||
+    value.startsWith("https://127.0.0.1")
+  );
+}
+
+function isBenignRuntimeNetworkLine(normalized: string) {
+  if (/\b(?:curl|wget)\b|fetch\(|beacon|telemetry|exfiltrat/.test(normalized)) {
+    return false;
+  }
+
+  const urls = normalized.match(/(?:blob:)?https?:\/\/[^\s"'\])}]+/g) ?? [];
+
+  return urls.length > 0 && urls.every(isBenignRuntimeUrl);
+}
+
 export function suspiciousLogEvent(line: string): SandboxSecurityEvent | undefined {
   const normalized = line.toLowerCase();
+
+  if (isBenignRuntimeNetworkLine(normalized)) {
+    return undefined;
+  }
+
   const checks: Array<{
     pattern: RegExp;
     severity: SecuritySeverity;

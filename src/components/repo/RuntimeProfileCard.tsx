@@ -73,7 +73,7 @@ function commandOutput(run: SandboxCommandRun | undefined, terminalLines: Termin
     return [];
   }
 
-  const startedAt = Date.parse(run.startedAt);
+  const startedAt = Date.parse(run.outputStartedAt ?? run.startedAt);
   const finishedAt = run.finishedAt ? Date.parse(run.finishedAt) : undefined;
 
   return (terminalLines ?? [])
