@@ -23,6 +23,7 @@ import { RunButton } from "@/components/repo/RunButton";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { SectionLoading } from "@/components/ui/section-loading";
 import { Skeleton } from "@/components/ui/skeleton";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { usePod } from "@/hooks/usePod";
@@ -86,6 +87,22 @@ function setStoredRunIntent(repoId: string, isRunning: boolean) {
   } catch {
     // Storage may be unavailable in private or restricted browser contexts.
   }
+}
+
+function repoOpeningPercent(isRepoLoading: boolean, podState: string, hasFileTree: boolean) {
+  if (isRepoLoading) return 10;
+  if (podState === "booting") return 24;
+  if (podState === "cloning") return 44;
+  if (hasFileTree) return 72;
+  return 36;
+}
+
+function repoOpeningMessage(isRepoLoading: boolean, podState: string, hasFileTree: boolean) {
+  if (isRepoLoading) return "Loading repo metadata";
+  if (podState === "booting") return "Starting BrowserPod";
+  if (podState === "cloning") return "Downloading repository files";
+  if (hasFileTree) return "Preparing the first readable file";
+  return "Waiting for cached source context";
 }
 
 export function RepoPage() {
@@ -379,9 +396,16 @@ export function RepoPage() {
   const portalUrl = snapshot.portalUrl;
   const effectiveRunnability = snapshot.runnability ?? repo?.runnability ?? undefined;
   const effectiveFileTree = fileTree ?? snapshot.fileTree ?? repo?.fileTree ?? undefined;
+  const firstSupportedPath = effectiveFileTree ? findFirstSupportedFile(effectiveFileTree) : undefined;
+  const analysisProgress = repo?.analysisProgress ?? extraction?.analysisProgress ?? null;
+  const isExtractionInFlight = repo?.status === "cloning" || repo?.status === "analyzing";
   const isTreeLoading =
     isLoading ||
     ((snapshot.state === "booting" || snapshot.state === "cloning") && !effectiveFileTree);
+  const isCodeLoading = isTreeLoading || isFileLoading || Boolean(firstSupportedPath && !selectedPath && !fileError);
+  const repoLoadingPercent = repoOpeningPercent(isLoading, snapshot.state, Boolean(effectiveFileTree));
+  const repoLoadingMessage = repoOpeningMessage(isLoading, snapshot.state, Boolean(effectiveFileTree));
+  const latestTerminalLine = snapshot.terminal.at(-1)?.text;
 
   useEffect(() => {
     if (!repo?.id || fileTree) {
@@ -401,12 +425,10 @@ export function RepoPage() {
       return;
     }
 
-    const firstFile = findFirstSupportedFile(effectiveFileTree);
-
-    if (firstFile) {
-      void selectFile(firstFile);
+    if (firstSupportedPath) {
+      void selectFile(firstSupportedPath);
     }
-  }, [effectiveFileTree, isFileLoading, selectedPath, selectFile]);
+  }, [effectiveFileTree, firstSupportedPath, isFileLoading, selectedPath, selectFile]);
 
   useEffect(() => {
     if (!selectedPath || !fileError || isFileLoading || !isReadablePodState(snapshot.state)) {
@@ -417,7 +439,7 @@ export function RepoPage() {
   }, [fileError, isFileLoading, selectedPath, selectFile, snapshot.state]);
 
   return (
-    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
+    <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8 xl:max-w-[104rem] xl:pr-[25rem]">
       <div className="mb-4 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
         <div className="min-w-0">
           <Button variant="ghost" size="sm" asChild className="mb-3">
@@ -507,12 +529,13 @@ export function RepoPage() {
           {isSidebarOpen && (
             <aside className="min-h-[36rem] overflow-hidden rounded-lg border border-border bg-background">
               {isTreeLoading ? (
-                <div className="space-y-3 p-4">
-                  <Skeleton className="h-8 w-full" />
-                  <Skeleton className="h-8 w-4/5" />
-                  <Skeleton className="h-8 w-3/5" />
-                  <Skeleton className="h-8 w-5/6" />
-                </div>
+                <SectionLoading
+                  title="Loading file tree"
+                  message={repoLoadingMessage}
+                  percent={repoLoadingPercent}
+                  detail={latestTerminalLine ?? repo?.githubUrl}
+                  className="min-h-[36rem] rounded-none border-0"
+                />
               ) : (
                 <FileTree tree={effectiveFileTree} selectedPath={selectedPath} onSelectFile={selectFile} />
               )}
@@ -528,7 +551,6 @@ export function RepoPage() {
                   <TabsTrigger value="functions">Functions</TabsTrigger>
                   <TabsTrigger value="live">Live Preview</TabsTrigger>
                   <TabsTrigger value="security">Security</TabsTrigger>
-                  <TabsTrigger value="chat">Chat</TabsTrigger>
                 </TabsList>
               </div>
 
@@ -536,28 +558,34 @@ export function RepoPage() {
                 <FileViewer
                   path={selectedPath}
                   content={fileContent}
-                  isLoading={isFileLoading}
+                  isLoading={isCodeLoading}
                   error={fileError}
                   onRetry={selectedPath ? () => void selectFile(selectedPath) : undefined}
+                  loadingTitle={isFileLoading ? "Downloading file" : "Opening repository"}
+                  loadingMessage={isFileLoading ? "Reading source content" : repoLoadingMessage}
+                  loadingPercent={isFileLoading ? 82 : repoLoadingPercent}
+                  loadingDetail={isFileLoading ? selectedPath : latestTerminalLine ?? repo?.githubUrl}
                 />
               </TabsContent>
 
               <TabsContent value="ai-readme" className="min-h-[36rem] rounded-lg border border-border bg-background">
                 <AiReadmeViewer
                   readme={aiReadme}
-                  isLoading={isAiLoading}
+                  isLoading={isAiLoading || (!aiReadme && isExtractionInFlight)}
                   error={aiError}
                   onRetry={() => void loadAiReadme()}
+                  progress={analysisProgress}
                 />
               </TabsContent>
 
               <TabsContent value="functions" className="min-h-[36rem] rounded-lg border border-border bg-background">
                 <FunctionsViewer
                   extraction={extraction}
-                  isLoading={isAiLoading}
+                  isLoading={isAiLoading || (!extraction && isExtractionInFlight)}
                   error={aiError}
                   repoName={repo?.name}
                   onRetry={() => void loadExtraction()}
+                  progress={analysisProgress}
                 />
               </TabsContent>
 
@@ -572,22 +600,16 @@ export function RepoPage() {
               <TabsContent value="security" className="min-h-[36rem] rounded-lg border border-border bg-background">
                 <SecurityOverview
                   extraction={extraction}
-                  isLoading={isAiLoading || repo?.status === "analyzing"}
+                  isLoading={isAiLoading || (!extraction?.security && isExtractionInFlight)}
                   error={aiError}
                   onRetry={repoId ? () => void api.ai.extractStored(repoId).then(() => {
                     void refresh();
                     void loadExtraction();
                   }) : undefined}
+                  progress={analysisProgress}
                 />
               </TabsContent>
 
-              <TabsContent value="chat" className="min-h-[36rem]">
-                {repoId ? (
-                  <ChatPanel scope={{ type: "repo", id: repoId }} title="Repo AI" />
-                ) : (
-                  <Skeleton className="h-[36rem]" />
-                )}
-              </TabsContent>
             </Tabs>
 
             <section className="mt-4 overflow-hidden rounded-lg border border-border bg-background">
@@ -619,6 +641,20 @@ export function RepoPage() {
             </section>
           </section>
         </div>
+      )}
+
+      {!error && (
+        <aside className="mt-4 xl:fixed xl:right-6 xl:top-1/2 xl:z-40 xl:mt-0 xl:w-[22rem] xl:-translate-y-1/2">
+          {repoId ? (
+            <ChatPanel
+              scope={{ type: "repo", id: repoId }}
+              title="Repo AI"
+              className="min-h-[34rem] border-cyan-200/70 bg-background/95 shadow-[0_22px_70px_rgba(8,47,73,0.18)] backdrop-blur xl:h-[min(42rem,calc(100vh-7rem))] xl:min-h-0 dark:border-cyan-900/60"
+            />
+          ) : (
+            <Skeleton className="min-h-[34rem] rounded-lg xl:h-[min(42rem,calc(100vh-7rem))]" />
+          )}
+        </aside>
       )}
     </main>
   );

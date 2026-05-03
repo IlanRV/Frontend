@@ -15,9 +15,9 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SectionLoading } from "@/components/ui/section-loading";
 import { cn } from "@/lib/utils";
-import type { ExtractionResponse, FunctionDoc } from "@/types";
+import type { AnalysisProgress, ExtractionResponse, FunctionDoc } from "@/types";
 
 interface FunctionsViewerProps {
   extraction?: ExtractionResponse;
@@ -25,6 +25,7 @@ interface FunctionsViewerProps {
   error?: string;
   repoName?: string;
   onRetry?: () => void;
+  progress?: AnalysisProgress | null;
 }
 
 function countByType(functions: FunctionDoc[], type: FunctionDoc["type"]) {
@@ -183,7 +184,7 @@ function FunctionCard({
   );
 }
 
-export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetry }: FunctionsViewerProps) {
+export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetry, progress }: FunctionsViewerProps) {
   const [query, setQuery] = useState("");
   const [expandedCards, setExpandedCards] = useState<Set<string>>(() => new Set());
   const functions = useMemo(() => extraction?.functions ?? [], [extraction?.functions]);
@@ -214,16 +215,13 @@ export function FunctionsViewer({ extraction, isLoading, error, repoName, onRetr
 
   if (isLoading) {
     return (
-      <div className="space-y-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-        </div>
-        <Skeleton className="h-11 w-full" />
-        <Skeleton className="h-48 w-full" />
-        <Skeleton className="h-48 w-full" />
-      </div>
+      <SectionLoading
+        title="Mapping functions"
+        message={progress?.message ?? "Documenting public code surfaces"}
+        percent={progress?.percent ?? 58}
+        detail="Function cards appear here as soon as the latest extraction payload is ready."
+        className="min-h-[36rem] rounded-none border-0"
+      />
     );
   }
 

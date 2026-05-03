@@ -201,3 +201,43 @@
     @apply border-0 bg-transparent p-0 text-zinc-100;
   }
 }
+
+@layer utilities {
+  .repo-loading-grid {
+    background-image:
+      linear-gradient(hsl(var(--border) / 0.25) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--border) / 0.25) 1px, transparent 1px);
+    background-size: 28px 28px;
+  }
+
+  .repo-loading-sweep {
+    animation: repo-loading-sweep 2.4s ease-in-out infinite;
+  }
+
+  .repo-loading-glow {
+    animation: repo-loading-glow 1.8s ease-in-out infinite;
+  }
+}
+
+@keyframes repo-loading-sweep {
+  0% {
+    transform: translateX(-100%);
+  }
+
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+@keyframes repo-loading-glow {
+  0%,
+  100% {
+    opacity: 0.78;
+    transform: scale(0.98);
+  }
+
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}

@@ -12,7 +12,8 @@ describe("AiReadmeViewer", () => {
     const onRetry = vi.fn();
     const { rerender } = render(<AiReadmeViewer isLoading />);
 
-    expect(document.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+    expect(screen.getByText("Building AI README")).toBeInTheDocument();
+    expect(screen.getByText("Live loading")).toBeInTheDocument();
     rerender(<AiReadmeViewer error="AI failed" onRetry={onRetry} />);
     await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
     expect(onRetry).toHaveBeenCalledOnce();
@@ -62,7 +63,8 @@ describe("FunctionsViewer", () => {
     const onRetry = vi.fn();
     const { rerender } = render(<FunctionsViewer isLoading />);
 
-    expect(document.querySelectorAll(".animate-pulse").length).toBeGreaterThan(0);
+    expect(screen.getByText("Mapping functions")).toBeInTheDocument();
+    expect(screen.getByText("Live loading")).toBeInTheDocument();
     rerender(<FunctionsViewer error="Extraction failed" onRetry={onRetry} />);
     await userEvent.click(screen.getByRole("button", { name: /Retry/ }));
     expect(onRetry).toHaveBeenCalledOnce();

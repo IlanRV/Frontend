@@ -387,10 +387,12 @@ describe("RepoPage", () => {
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
   });
 
-  it("loads AI tabs and renders live and chat panels", async () => {
+  it("loads AI tabs and keeps repo chat visible outside the tab switcher", async () => {
     const loadExtraction = vi.fn();
     mockedUseRepo.mockReturnValue(repoHook({ extraction: undefined, aiReadme: undefined, loadExtraction }));
     renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByTestId("chat-panel")).toHaveTextContent("Repo AI");
 
     await userEvent.click(screen.getByRole("tab", { name: "AI Readme" }));
     await waitFor(() => expect(loadExtraction).toHaveBeenCalledOnce());
@@ -402,9 +404,7 @@ describe("RepoPage", () => {
 
     await userEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
     expect(screen.getByTestId("portal-preview")).toHaveTextContent("https://portal.example");
-
-    await userEvent.click(screen.getByRole("tab", { name: "Chat" }));
-    expect(screen.getByTestId("chat-panel")).toHaveTextContent("Repo AI");
+    expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
   });
 
   it("falls back to backend file reads when BrowserPod is not readable", async () => {

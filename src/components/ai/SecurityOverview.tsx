@@ -3,14 +3,15 @@ import { AlertTriangle, CheckCircle2, FileWarning, PackageSearch, RotateCw, Shie
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { Skeleton } from "@/components/ui/skeleton";
-import type { ExtractionResponse, SecuritySeverity } from "@/types";
+import { SectionLoading } from "@/components/ui/section-loading";
+import type { AnalysisProgress, ExtractionResponse, SecuritySeverity } from "@/types";
 
 interface SecurityOverviewProps {
   extraction?: ExtractionResponse;
   isLoading?: boolean;
   error?: string;
   onRetry?: () => void;
+  progress?: AnalysisProgress | null;
 }
 
 function severityVariant(severity: SecuritySeverity | "unknown") {
@@ -32,22 +33,20 @@ function severityLabel(severity: SecuritySeverity | "unknown") {
   return severity === "unknown" ? "Unknown" : severity[0].toUpperCase() + severity.slice(1);
 }
 
-export function SecurityOverview({ extraction, isLoading, error, onRetry }: SecurityOverviewProps) {
+export function SecurityOverview({ extraction, isLoading, error, onRetry, progress }: SecurityOverviewProps) {
   const security = extraction?.security;
   const findingCount = security?.findings.length ?? 0;
   const dependencyRiskCount = security?.dependencyRisks.length ?? 0;
 
   if (isLoading) {
     return (
-      <div className="space-y-4 p-4">
-        <div className="grid gap-3 sm:grid-cols-3">
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-          <Skeleton className="h-24" />
-        </div>
-        <Skeleton className="h-40 w-full" />
-        <Skeleton className="h-40 w-full" />
-      </div>
+      <SectionLoading
+        title="Scanning security"
+        message={progress?.message ?? "Checking source, scripts, and dependencies"}
+        percent={progress?.percent ?? 64}
+        detail="The scan follows the same live extraction progress used by the repo status bar."
+        className="min-h-[36rem] rounded-none border-0"
+      />
     );
   }
 

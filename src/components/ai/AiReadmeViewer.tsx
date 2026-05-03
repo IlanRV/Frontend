@@ -5,14 +5,15 @@ import remarkGfm from "remark-gfm";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
-import type { AiReadme } from "@/types";
+import { SectionLoading } from "@/components/ui/section-loading";
+import type { AiReadme, AnalysisProgress } from "@/types";
 
 interface AiReadmeViewerProps {
   readme?: AiReadme;
   isLoading?: boolean;
   error?: string;
   onRetry?: () => void;
+  progress?: AnalysisProgress | null;
 }
 
 function listSection(title: string, items: string[] | undefined) {
@@ -53,7 +54,7 @@ function buildMarkdownReadme(readme: AiReadme) {
     .trim();
 }
 
-export function AiReadmeViewer({ readme, isLoading, error, onRetry }: AiReadmeViewerProps) {
+export function AiReadmeViewer({ readme, isLoading, error, onRetry, progress }: AiReadmeViewerProps) {
   const [hasCopied, setHasCopied] = useState(false);
   const markdown = useMemo(() => (readme ? buildMarkdownReadme(readme) : ""), [readme]);
 
@@ -74,11 +75,13 @@ export function AiReadmeViewer({ readme, isLoading, error, onRetry }: AiReadmeVi
 
   if (isLoading) {
     return (
-      <div className="space-y-4 p-4">
-        <Skeleton className="h-8 w-2/5" />
-        <Skeleton className="h-24 w-full" />
-        <Skeleton className="h-32 w-4/5" />
-      </div>
+      <SectionLoading
+        title="Building AI README"
+        message={progress?.message ?? "Waiting for generated documentation"}
+        percent={progress?.percent ?? 84}
+        detail="This updates from the live extraction status while the repo analysis finishes."
+        className="min-h-[36rem] rounded-none border-0"
+      />
     );
   }
 

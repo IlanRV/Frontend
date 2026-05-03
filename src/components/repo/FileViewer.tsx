@@ -1,11 +1,11 @@
 import Editor from "@monaco-editor/react";
-import { Loader2, RotateCw } from "lucide-react";
+import { RotateCw } from "lucide-react";
 import { useEffect, useState } from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 
 import { Button } from "@/components/ui/button";
-import { Skeleton } from "@/components/ui/skeleton";
+import { SectionLoading } from "@/components/ui/section-loading";
 
 interface FileViewerProps {
   path?: string;
@@ -13,6 +13,10 @@ interface FileViewerProps {
   isLoading?: boolean;
   error?: string;
   onRetry?: () => void;
+  loadingTitle?: string;
+  loadingMessage?: string;
+  loadingPercent?: number | null;
+  loadingDetail?: string;
 }
 
 function languageForPath(path?: string) {
@@ -59,18 +63,28 @@ function useEditorTheme() {
   return theme;
 }
 
-export function FileViewer({ path, content, isLoading, error, onRetry }: FileViewerProps) {
+export function FileViewer({
+  path,
+  content,
+  isLoading,
+  error,
+  onRetry,
+  loadingTitle = "Loading file",
+  loadingMessage = "Reading source content",
+  loadingPercent,
+  loadingDetail,
+}: FileViewerProps) {
   const theme = useEditorTheme();
 
   if (isLoading) {
     return (
-      <div className="space-y-3 p-4">
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Loading file
-        </div>
-        <Skeleton className="h-96 w-full" />
-      </div>
+      <SectionLoading
+        title={loadingTitle}
+        message={loadingMessage}
+        percent={loadingPercent}
+        detail={loadingDetail ?? path}
+        className="min-h-[36rem]"
+      />
     );
   }
 
