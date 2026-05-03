@@ -112,6 +112,7 @@ export interface SandboxCommandRun {
   label?: string | null;
   status: SandboxCommandRunStatus;
   startedAt: string;
+  previewExpected?: boolean;
   finishedAt?: string;
   message?: string;
 }

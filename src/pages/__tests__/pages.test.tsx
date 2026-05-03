@@ -356,7 +356,7 @@ describe("RepoPage", () => {
     mockedUsePod.mockReturnValue(pod);
     renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
 
-    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run in BrowserPod" }));
 
     await waitFor(() => expect(pod.runProject).toHaveBeenCalledWith("dev", { previewExpected: true }));
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
@@ -375,7 +375,7 @@ describe("RepoPage", () => {
 
     expect(screen.getByText("Runtime profile")).toBeInTheDocument();
     expect(screen.getByText("Auto preview command")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Run" }));
+    await userEvent.click(screen.getAllByRole("button", { name: "Run preview in BrowserPod" })[0]);
 
     await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm run dev", { previewExpected: true }));
   });

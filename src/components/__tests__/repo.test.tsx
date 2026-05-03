@@ -187,7 +187,7 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("Auto preview command")).toBeInTheDocument();
     expect(screen.getByText("npm run dev")).toBeInTheDocument();
     expect(screen.getByText("package.json scripts.dev")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Run preview" }));
+    await userEvent.click(screen.getByRole("button", { name: "Run preview in BrowserPod" }));
     expect(onRunAuto).toHaveBeenCalledWith("npm run dev");
   });
 
@@ -205,7 +205,7 @@ describe("RuntimeProfileCard", () => {
     })} onRunManualCommand={onRunManualCommand} />);
 
     expect(screen.getByText("Manual only")).toBeInTheDocument();
-    expect(screen.getByText("npm test")).toBeInTheDocument();
+    expect(screen.getAllByText("npm test").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "Run npm test in BrowserPod" }));
     expect(onRunManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test" }));
 
@@ -255,7 +255,7 @@ describe("RuntimeProfileCard", () => {
     />);
 
     expect(screen.getByText("This repo is mostly tests or fixtures, so DevHub will not auto-start a preview.")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Run Run tests in BrowserPod" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Run tests in BrowserPod" })).toBeDisabled();
     expect(screen.getByText("Status: running")).toBeInTheDocument();
     expect(screen.getByText("tests passed")).toBeInTheDocument();
     expect(screen.getByText("warning output")).toBeInTheDocument();

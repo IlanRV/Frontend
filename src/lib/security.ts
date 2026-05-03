@@ -15,8 +15,19 @@ export function requiresSandboxConfirmation(security: SecurityScan | null | unde
   return security?.riskLevel === "critical" || security?.riskLevel === "high";
 }
 
-export function runButtonLabel(security: SecurityScan | null | undefined) {
-  return requiresSandboxConfirmation(security) ? "Run in BrowserPod sandbox anyway" : "Run";
+export function runtimeRunLabel(runnability: RunnabilityResult | null | undefined) {
+  switch (runnability?.runtimeProfile?.projectKind) {
+    case "preview-app":
+      return "Run preview in BrowserPod";
+    case "api-server":
+      return "Run API server in BrowserPod";
+    default:
+      return "Run in BrowserPod";
+  }
+}
+
+export function runButtonLabel(security: SecurityScan | null | undefined, runnability?: RunnabilityResult | null) {
+  return requiresSandboxConfirmation(security) ? "Run in BrowserPod sandbox anyway" : runnability ? runtimeRunLabel(runnability) : "Run";
 }
 
 function cleanCommand(command: string | null | undefined) {
@@ -58,6 +69,24 @@ export function getManualCommands(runnability: RunnabilityResult | null | undefi
 
     seen.add(value);
     return true;
+  });
+}
+
+export function isPreviewCommand(runnability: RunnabilityResult | null | undefined, command: string) {
+  const value = cleanCommand(command);
+
+  if (!value) {
+    return false;
+  }
+
+  const autoCommand = getAutoPreviewCommand(runnability);
+
+  if (autoCommand === value || (runnability?.entryPoint && value === `npm run ${runnability.entryPoint}` && autoCommand === runnability.entryPoint)) {
+    return true;
+  }
+
+  return getManualCommands(runnability).some((manualCommand) => {
+    return cleanCommand(manualCommand.command) === value && manualCommand.previewExpected === true;
   });
 }
 

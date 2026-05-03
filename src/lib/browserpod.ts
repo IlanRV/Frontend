@@ -75,8 +75,10 @@ const MAX_ROUTE_SCAN_FILES = 40;
 const MAX_ROUTE_SCAN_FILE_BYTES = 200_000;
 const REPO_ROOT = "/home/user/repo";
 const FILE_TREE_RETRY_DELAYS_MS = [0, 350, 800, 1400];
+const CLONE_TIMEOUT_MS = 60_000;
 const INSTALL_TIMEOUT_MS = 60_000;
 const PORTAL_STARTUP_TIMEOUT_MS = 30_000;
+const STOP_TIMEOUT_MS = 10_000;
 
 interface PodLifecycleManagerOptions {
   repoId: string;
@@ -733,6 +735,18 @@ export class PodLifecycleManager {
     });
   }
 
+  private recordRuntimeOutput(text: string) {
+    const cleaned = text.replace(/\x1B\[[0-?]*[ -/]*[@-~]/g, "").trim();
+
+    if (!cleaned) {
+      return;
+    }
+
+    this.emit({
+      terminal: [...this.snapshot.terminal, createTerminalLine(cleaned.slice(0, 1000), "stdout")].slice(-200),
+    });
+  }
+
   private recordSecurityEvent(event: SandboxSecurityEvent) {
     this.emit({
       securityEvents: [...(this.snapshot.securityEvents ?? []), event],
@@ -752,6 +766,7 @@ export class PodLifecycleManager {
       const text = terminalChunkToText(chunk);
 
       for (const line of text.split(/\r?\n/).map((item) => item.trim()).filter(Boolean)) {
+        this.recordRuntimeOutput(line);
         const event = suspiciousLogEvent(line);
 
         if (!event) {
@@ -805,6 +820,42 @@ export class PodLifecycleManager {
       }
 
       return result;
+    } finally {
+      if (timeoutId !== undefined) {
+        window.clearTimeout(timeoutId);
+      }
+    }
+  }
+
+  private async runStopOperationWithTimeout(operation: () => Promise<void> | void) {
+    let timeoutId: number | undefined;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timeoutId = window.setTimeout(() => resolve("timeout"), STOP_TIMEOUT_MS);
+    });
+
+    try {
+      const result = await Promise.race([
+        Promise.resolve().then(operation).then(() => "done" as const),
+        timeout,
+      ]);
+
+      if (result === "timeout") {
+        const event = createSecurityEvent(
+          "stop-timeout",
+          "stop",
+          "process",
+          "high",
+          "Sandbox stop timed out",
+          "The frontend attempted to stop the BrowserPod process, but the stop command did not finish before the safety timeout.",
+          `BrowserPod stop operation exceeded ${STOP_TIMEOUT_MS}ms.`,
+          "stop BrowserPod process",
+        );
+        this.recordSecurityEvent(event);
+        this.log(event.description, "stderr");
+        return false;
+      }
+
+      return true;
     } finally {
       if (timeoutId !== undefined) {
         window.clearTimeout(timeoutId);
@@ -1065,7 +1116,22 @@ export class PodLifecycleManager {
     try {
       this.clonedRepoUrl = undefined;
       await this.runCommand("rm", ["-rf", REPO_ROOT], { echo: false });
-      await this.runCommand("git", ["clone", "--depth", "1", repoUrl, REPO_ROOT]);
+      await this.runCommandWithTimeout(
+        "git",
+        ["clone", "--depth", "1", repoUrl, REPO_ROOT],
+        {},
+        CLONE_TIMEOUT_MS,
+        () => createSecurityEvent(
+          "clone-timeout",
+          "clone",
+          "resource",
+          "high",
+          "Clone timed out",
+          "The git clone command did not finish before the safety timeout.",
+          `git clone --depth 1 exceeded ${CLONE_TIMEOUT_MS}ms.`,
+          `git clone --depth 1 ${repoUrl}`,
+        ),
+      );
       this.clonedRepoUrl = repoUrl;
       const fileTree = await this.refreshFileTreeWithRetries();
       this.emit({ state: "ready", fileTree, runnability: undefined });
@@ -1429,7 +1495,7 @@ export class PodLifecycleManager {
 
     if (maybeKill) {
       try {
-        await maybeKill.call(process);
+        await this.runStopOperationWithTimeout(() => maybeKill.call(process));
       } catch (error) {
         const message = error instanceof Error ? error.message : "BrowserPod process kill failed";
         this.recordSecurityEvent(createSecurityEvent(

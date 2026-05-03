@@ -211,6 +211,7 @@ function normalizeRuntimeCommandSuggestion(payload: unknown): RuntimeCommandSugg
 
   return {
     command,
+    label: readString(payload, "label") ?? null,
     description: readString(payload, "description") ?? null,
     source: normalizeCommandSource(payload.source),
     confidence: normalizeCommandConfidence(payload.confidence),

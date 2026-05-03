@@ -42,7 +42,7 @@ import { api } from "@/lib/api";
 import { loadCachedFileTree, saveCachedFileTree } from "@/lib/fileTreeCache";
 import { getAutoPreviewCommand, getManualCommands, requiresSandboxConfirmation, runButtonLabel } from "@/lib/security";
 import { cn } from "@/lib/utils";
-import type { FileTreeNode, RegisterRunOptions, RuntimeCommandSuggestion } from "@/types";
+import type { FileTreeNode, RegisterRunOptions, RuntimeCommandSuggestion, SandboxCommandRun } from "@/types";
 
 function findFirstSupportedFile(node: FileTreeNode): string | undefined {
   if (node.type === "file" && node.supported) {
@@ -164,6 +164,7 @@ export function RepoPage() {
   const [isRunActionPending, setIsRunActionPending] = useState(false);
   const [isSecurityConfirmOpen, setIsSecurityConfirmOpen] = useState(false);
   const [lastRunCommand, setLastRunCommand] = useState<string | undefined>();
+  const [manualCommandRuns, setManualCommandRuns] = useState<Record<string, SandboxCommandRun>>({});
   const [bootAttempt, setBootAttempt] = useState(0);
   const bootedRepoRef = useRef<string | undefined>();
   const autoRunRef = useRef(false);
@@ -191,6 +192,7 @@ export function RepoPage() {
     setActiveTab("code");
     setIsRunActionPending(false);
     setLastRunCommand(undefined);
+    setManualCommandRuns({});
     autoRunRef.current = false;
     registeredPortalRef.current = undefined;
     pendingRunOptionsRef.current = {};
@@ -249,13 +251,13 @@ export function RepoPage() {
 
   const handleRun = useCallback(async (confirmed = false, manualOverride = false, commandOverride?: string, previewExpectedOverride?: boolean) => {
     if (isRunActionPending) {
-      return;
+      return false;
     }
 
     if (!confirmed && requiresSandboxConfirmation(effectiveSecurity)) {
       pendingConfirmationRef.current = { command: commandOverride, manualOverride, previewExpected: previewExpectedOverride };
       setIsSecurityConfirmOpen(true);
-      return;
+      return false;
     }
 
     setIsSecurityConfirmOpen(false);
@@ -285,7 +287,7 @@ export function RepoPage() {
 
       if ((!requestedManualOverride && !requestedCommandOverride && !getAutoPreviewCommand(runnability)) || !runCommand) {
         toast.error("This repo is not runnable in BrowserPod yet");
-        return;
+        return false;
       }
 
       await runProject(runCommand, { previewExpected });
@@ -302,8 +304,10 @@ export function RepoPage() {
       }
       setIsConsoleOpen(true);
       toast.success(previewExpected ? "Project starting in BrowserPod" : "Sandbox command started in BrowserPod");
+        return true;
     } catch (runError) {
       toast.error(runError instanceof Error ? runError.message : "Unable to run project");
+        return false;
     } finally {
       setIsRunActionPending(false);
     }
@@ -335,8 +339,102 @@ export function RepoPage() {
   }, [handleRun]);
 
   const handleManualCommand = useCallback((command: RuntimeCommandSuggestion) => {
-    void handleRun(false, true, command.command, command.previewExpected ?? false);
-  }, [handleRun]);
+    const startedAt = new Date().toISOString();
+    const previewExpected = command.previewExpected ?? false;
+
+    setManualCommandRuns((current) => ({
+      ...current,
+      [command.command]: {
+        command: command.command,
+        label: command.label ?? null,
+        status: "starting",
+        startedAt,
+        previewExpected,
+      },
+    }));
+
+    void handleRun(false, true, command.command, previewExpected)
+      .then((didStart) => {
+        if (!didStart) {
+          if (requiresSandboxConfirmation(effectiveSecurity)) {
+            return;
+          }
+
+          setManualCommandRuns((current) => ({
+            ...current,
+            [command.command]: {
+              ...current[command.command],
+              command: command.command,
+              label: command.label ?? null,
+              status: "failed",
+              finishedAt: new Date().toISOString(),
+              message: "Command did not start.",
+            },
+          }));
+          return;
+        }
+
+        setManualCommandRuns((current) => ({
+          ...current,
+          [command.command]: {
+            ...current[command.command],
+            status: "running",
+            message: previewExpected ? "Preview command is running in BrowserPod." : "Command is running in BrowserPod.",
+          },
+        }));
+      });
+  }, [effectiveSecurity, handleRun]);
+
+  const handleStopManualCommand = useCallback((command: RuntimeCommandSuggestion) => {
+    setManualCommandRuns((current) => ({
+      ...current,
+      [command.command]: {
+        ...current[command.command],
+        command: command.command,
+        label: command.label ?? null,
+        status: "stopping",
+        message: "Stopping BrowserPod command...",
+      },
+    }));
+
+    void handleStop()
+      .then(() => {
+        setManualCommandRuns((current) => ({
+          ...current,
+          [command.command]: {
+            ...current[command.command],
+            status: "completed",
+            finishedAt: new Date().toISOString(),
+            message: "Stopped by user.",
+          },
+        }));
+      });
+  }, [handleStop]);
+
+  useEffect(() => {
+    if (snapshot.state !== "ready") {
+      return;
+    }
+
+    setManualCommandRuns((current) => {
+      let changed = false;
+      const next = Object.fromEntries(Object.entries(current).map(([command, run]) => {
+        if (run.previewExpected || (run.status !== "starting" && run.status !== "running" && run.status !== "stopping")) {
+          return [command, run];
+        }
+
+        changed = true;
+        return [command, {
+          ...run,
+          status: "completed" as const,
+          finishedAt: new Date().toISOString(),
+          message: run.status === "stopping" ? "Stopped by user." : "Command finished or returned control to BrowserPod.",
+        }];
+      }));
+
+      return changed ? next : current;
+    });
+  }, [manualCommandRuns, snapshot.state]);
 
   useEffect(() => {
     if (!repo?.githubUrl || bootedRepoRef.current === repo.id) {
@@ -504,7 +602,7 @@ export function RepoPage() {
   const isExtractionInFlight = repo?.status === "cloning" || repo?.status === "analyzing";
   const autoPreviewCommand = getAutoPreviewCommand(effectiveRunnability);
   const manualCommands = getManualCommands(effectiveRunnability);
-  const safeRunLabel = autoPreviewCommand ? runButtonLabel(effectiveSecurity) : "Run";
+  const safeRunLabel = autoPreviewCommand ? runButtonLabel(effectiveSecurity, effectiveRunnability) : "Run";
   const canManualOverride = !autoPreviewCommand && Boolean(repo?.runScript) && manualCommands.length === 0;
   const isTreeLoading =
     isLoading ||
@@ -667,8 +765,11 @@ export function RepoPage() {
         <RuntimeProfileCard
           runnability={effectiveRunnability}
           isBusy={isBusy}
+          commandRuns={manualCommandRuns}
+          terminalLines={snapshot.terminal}
           onRunAuto={handleAutoCommand}
           onRunManualCommand={handleManualCommand}
+          onStopManualCommand={handleStopManualCommand}
         />
       )}
 
