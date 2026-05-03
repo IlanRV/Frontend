@@ -111,8 +111,11 @@ export function RunInspectionDialog({
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[86rem] overflow-hidden p-0 sm:w-[calc(100vw-2rem)]">
+    <Dialog open={open} onOpenChange={onOpenChange} modal={false}>
+      <DialogContent
+        className="max-h-[92vh] w-[calc(100vw-1rem)] max-w-[86rem] overflow-hidden p-0 sm:w-[calc(100vw-2rem)]"
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <div className="border-b border-border px-4 py-3 sm:px-5">
             <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">

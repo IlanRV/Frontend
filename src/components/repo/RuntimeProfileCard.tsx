@@ -110,6 +110,31 @@ function alternateRunSummary(count: number) {
   return `${count} alternate run${count === 1 ? "" : "s"}`;
 }
 
+interface RunPathOption {
+  key: string;
+  label: string;
+  command: string;
+  isManual: boolean;
+  manualCommand?: RuntimeCommandSuggestion;
+}
+
+function commandSourceLabel(command: RuntimeCommandSuggestion) {
+  switch (command.source) {
+    case "ai":
+      return "AI suggestion";
+    case "readme":
+      return "Documentation";
+    case "package-script":
+      return "Package script";
+    case "static-analysis":
+      return "Static analysis";
+    case "package-manager":
+      return "Package manager";
+    default:
+      return "Alternate";
+  }
+}
+
 export function RuntimeProfileCard({
   runnability,
   isBusy,
@@ -128,13 +153,40 @@ export function RuntimeProfileCard({
   const profile = runnability?.runtimeProfile;
   const autoCommand = getAutoPreviewCommand(runnability);
   const manualCommands = getManualCommands(runnability);
+  const runPathOptions: RunPathOption[] = [
+    ...(autoCommand ? [{ key: "official", label: `Official BrowserPod: ${autoCommand}`, command: autoCommand, isManual: false }] : []),
+    ...manualCommands.map((command, index) => ({
+      key: `manual-${index}`,
+      label: `${commandSourceLabel(command)}: ${commandLabel(command)} — ${command.command}`,
+      command: command.command,
+      isManual: true,
+      manualCommand: command,
+    })),
+  ];
+  const [selectedRunPath, setSelectedRunPath] = useState(runPathOptions[0]?.key ?? "");
+  const selectedRunOption = runPathOptions.find((option) => option.key === selectedRunPath) ?? runPathOptions[0];
   const hasManualRuns = manualCommands.length > 0;
   const hasActiveManualRun = Object.values(commandRuns ?? {}).some(isRunningStatus);
+  const selectedRun = selectedRunOption?.isManual ? commandRuns?.[selectedRunOption.command] : undefined;
+  const isSelectedRunning = isRunningStatus(selectedRun);
   const hasActiveRun = Boolean(isRunning || hasActiveManualRun);
   const hasRuntimeProfileFields = Boolean(profile || runnability?.autoCommand || manualCommands.length > 0);
 
   if (!hasRuntimeProfileFields) {
     return null;
+  }
+
+  function runSelectedPath() {
+    if (!selectedRunOption) {
+      return;
+    }
+
+    if (selectedRunOption.isManual && selectedRunOption.manualCommand) {
+      onRunManualCommand?.(selectedRunOption.manualCommand);
+      return;
+    }
+
+    onRunAuto?.(selectedRunOption.command);
   }
 
   return (
@@ -178,6 +230,35 @@ export function RuntimeProfileCard({
             )}
           </div>
         </div>
+        {runPathOptions.length > 0 && !isAnalysisOnly(runnability) && (
+          <div className="border-t border-border px-4 pb-4 pt-3">
+            <div className="flex flex-col gap-2 lg:flex-row lg:items-end">
+              <label className="flex min-w-0 flex-1 flex-col gap-1 text-xs font-medium text-muted-foreground">
+                Run path
+                <select
+                  value={selectedRunOption?.key ?? ""}
+                  onChange={(event) => setSelectedRunPath(event.target.value)}
+                  className="h-9 rounded-md border border-input bg-background px-3 font-mono text-xs text-foreground shadow-subtle focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
+                  disabled={isBusy || hasActiveRun}
+                >
+                  {runPathOptions.map((option) => (
+                    <option key={option.key} value={option.key}>{option.label}</option>
+                  ))}
+                </select>
+              </label>
+              <Button
+                type="button"
+                variant={selectedRunOption?.isManual ? "outline" : "success"}
+                size="sm"
+                disabled={isBusy || hasActiveRun || isSelectedRunning || !selectedRunOption}
+                onClick={runSelectedPath}
+              >
+                <Play className="h-4 w-4" />
+                Run selected in BrowserPod
+              </Button>
+            </div>
+          </div>
+        )}
       </CardHeader>
       {isOpen && <CardContent className="space-y-4 border-t border-border p-4 text-sm">
         {autoCommand && (

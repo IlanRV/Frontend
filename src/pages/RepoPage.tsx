@@ -17,6 +17,7 @@ import { ExtractionProgressLine } from "@/components/ai/ExtractionProgressLine";
 import { FunctionsViewer } from "@/components/ai/FunctionsViewer";
 import { SecurityOverview } from "@/components/ai/SecurityOverview";
 import { ChatPanel } from "@/components/chat/ChatPanel";
+import { FloatingRepoChat } from "@/components/chat/FloatingRepoChat";
 import { FileTree } from "@/components/repo/FileTree";
 import { FileViewer } from "@/components/repo/FileViewer";
 import { RunButton } from "@/components/repo/RunButton";
@@ -941,6 +942,7 @@ export function RepoPage() {
         onStop={isRunning ? () => void handleStop() : undefined}
         terminalLines={snapshot.terminal}
       />
+      {isRunInspectorOpen && repoId && <FloatingRepoChat repoId={repoId} />}
     </main>
   );
 }
