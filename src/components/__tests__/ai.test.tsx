@@ -5,7 +5,8 @@ import { toast } from "sonner";
 
 import { AiReadmeViewer } from "@/components/ai/AiReadmeViewer";
 import { FunctionsViewer } from "@/components/ai/FunctionsViewer";
-import { makeExtraction } from "@/test/factories";
+import { SecurityOverview } from "@/components/ai/SecurityOverview";
+import { makeExtraction, makeRunnability, makeSecurityScan } from "@/test/factories";
 
 describe("AiReadmeViewer", () => {
   it("renders loading, error, and empty states", async () => {
@@ -96,5 +97,105 @@ describe("FunctionsViewer", () => {
     render(<FunctionsViewer extraction={makeExtraction({ functions: [] })} />);
 
     expect(screen.getByText("No function docs were returned for this repo yet.")).toBeInTheDocument();
+  });
+});
+
+describe("SecurityOverview", () => {
+  it("renders structured runnability blocker details", () => {
+    const runnability = makeRunnability({
+      canRun: false,
+      entryPoint: null,
+      blockers: [],
+      blockerDetails: [
+        {
+          code: "missing-script",
+          severity: "medium",
+          title: "No start script",
+          description: "DevHub could not find a dev, start, or serve npm script.",
+          recommendation: "Add a package.json script that starts the web server.",
+          evidence: "scripts.test only",
+        },
+      ],
+    });
+
+    render(<SecurityOverview extraction={makeExtraction({ runnability })} runnability={runnability} />);
+
+    expect(screen.getByText("This repository cannot be started automatically")).toBeInTheDocument();
+    expect(screen.getByText("DevHub analyzed the project files but could not find a safe automatic startup path.")).toBeInTheDocument();
+    expect(screen.getByText("No start script")).toBeInTheDocument();
+    expect(screen.getByText("Add a package.json script that starts the web server.")).toBeInTheDocument();
+    expect(screen.getByText("scripts.test only")).toBeInTheDocument();
+  });
+
+  it("renders legacy runnability blockers when details are absent", () => {
+    const runnability = makeRunnability({
+      canRun: false,
+      entryPoint: null,
+      blockers: ["No readable package.json found at repo root"],
+    });
+
+    render(<SecurityOverview extraction={makeExtraction({ runnability })} runnability={runnability} />);
+
+    expect(screen.getByText("Cannot start automatically")).toBeInTheDocument();
+    expect(screen.getByText("No readable package.json found at repo root")).toBeInTheDocument();
+  });
+
+  it("groups security findings and dependency risks", () => {
+    render(<SecurityOverview extraction={makeExtraction({
+      security: makeSecurityScan({
+        riskLevel: "high",
+        summary: "Install scripts attempt credential access.",
+        findings: [
+          {
+            title: "Credential file probe",
+            severity: "high",
+            category: "secret",
+            file: "postinstall.js",
+            line: 12,
+            evidence: "fs.readFileSync('~/.ssh/id_rsa')",
+            impact: "Could steal SSH keys outside a sandbox.",
+            recommendation: "Do not run outside BrowserPod.",
+            confidence: "high",
+          },
+        ],
+        dependencyRisks: [
+          {
+            packageName: "flatmap-stream",
+            version: "0.1.1",
+            severity: "high",
+            risk: "Known compromised package lineage",
+            reason: "Associated with supply-chain credential theft.",
+            recommendation: "Remove the dependency.",
+            confidence: "medium",
+          },
+        ],
+      }),
+    })} />);
+
+    expect(screen.getByText("High / secret")).toBeInTheDocument();
+    expect(screen.getByText("Credential file probe")).toBeInTheDocument();
+    expect(screen.getByText("Dependency Review")).toBeInTheDocument();
+    expect(screen.getByText("flatmap-stream")).toBeInTheDocument();
+  });
+
+  it("shows BrowserPod runtime safety alerts", () => {
+    render(<SecurityOverview
+      extraction={makeExtraction()}
+      runtimeEvents={[
+        {
+          id: "evt-1",
+          code: "startup-timeout",
+          severity: "medium",
+          title: "Sandbox startup timed out",
+          description: "The sandbox was stopped because the project did not finish starting. This can happen with broken projects, infinite loops, or resource-heavy code.",
+          evidence: "No BrowserPod portal opened within 30 seconds.",
+          createdAt: "2026-05-03T00:00:00.000Z",
+        },
+      ]}
+    />);
+
+    expect(screen.getByText("BrowserPod runtime alerts")).toBeInTheDocument();
+    expect(screen.getByText("Sandbox startup timed out")).toBeInTheDocument();
+    expect(screen.getByText("No BrowserPod portal opened within 30 seconds.")).toBeInTheDocument();
   });
 });

@@ -399,7 +399,7 @@ describe("PodLifecycleManager project lifecycle", () => {
     await Promise.resolve();
     await Promise.resolve();
 
-    expect(pod.run).toHaveBeenCalledWith("npm", ["install"], expect.objectContaining({ cwd: "/home/user/repo" }));
+    expect(pod.run).toHaveBeenCalledWith("npm", ["install", "--ignore-scripts"], expect.objectContaining({ cwd: "/home/user/repo" }));
     expect(pod.run).toHaveBeenCalledWith("npm", ["run", "dev"], expect.objectContaining({ cwd: "/home/user/repo" }));
 
     await manager.stopProject();
@@ -407,6 +407,23 @@ describe("PodLifecycleManager project lifecycle", () => {
     expect(kill).toHaveBeenCalledOnce();
     expect(pod.run).toHaveBeenCalledWith("pkill", ["-f", "npm run"], expect.objectContaining({ cwd: "/home/user/repo" }));
     expect(snapshots.map((snapshot) => snapshot.state)).toEqual(expect.arrayContaining(["installing", "running", "stopping", "ready"]));
+  });
+
+  it("records a clear startup timeout event when no portal opens", async () => {
+    vi.useFakeTimers();
+    const { pod } = makePod();
+    vi.mocked(BrowserPod.boot).mockResolvedValue(pod as never);
+    const { manager, snapshots } = makeManager();
+
+    await manager.boot(document.createElement("div"));
+    const run = manager.runProject("dev");
+    await Promise.resolve();
+    await vi.advanceTimersByTimeAsync(30_000);
+
+    await expect(run).rejects.toThrow("The sandbox was stopped because the project did not finish starting");
+    expect(snapshots.at(-1)?.securityEvents).toEqual(expect.arrayContaining([
+      expect.objectContaining({ code: "startup-timeout", title: "Sandbox startup timed out" }),
+    ]));
   });
 
   it("terminates BrowserPod and clears runtime state", async () => {
