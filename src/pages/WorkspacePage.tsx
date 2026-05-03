@@ -8,6 +8,14 @@ import { AddRepoModal } from "@/components/repo/AddRepoModal";
 import { RepoCard } from "@/components/repo/RepoCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { stopRegisteredPod } from "@/hooks/usePod";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -19,7 +27,9 @@ export function WorkspacePage() {
   const navigate = useNavigate();
   const [isAddRepoOpen, setIsAddRepoOpen] = useState(false);
   const [stoppingRepoId, setStoppingRepoId] = useState<string | undefined>();
-  const { workspace, repos, isLoading, error, refresh, addRepo, updateRepo } = useWorkspace(id);
+  const [repoPendingDelete, setRepoPendingDelete] = useState<Repo | undefined>();
+  const [deletingRepoId, setDeletingRepoId] = useState<string | undefined>();
+  const { workspace, repos, isLoading, error, refresh, addRepo, updateRepo, deleteRepo } = useWorkspace(id);
 
   async function stopRepo(repo: Repo) {
     if (stoppingRepoId) {
@@ -47,6 +57,38 @@ export function WorkspacePage() {
       toast.error(stopError instanceof Error ? stopError.message : "Unable to stop sandbox");
     } finally {
       setStoppingRepoId(undefined);
+    }
+  }
+
+  async function confirmDeleteRepo() {
+    const repo = repoPendingDelete;
+
+    if (!repo || deletingRepoId) {
+      return;
+    }
+
+    setDeletingRepoId(repo.id);
+
+    try {
+      let localStopFailed = false;
+
+      if (repo.status === "running" || repo.portalUrl) {
+        await stopRegisteredPod(repo.id).catch(() => {
+          localStopFailed = true;
+        });
+      }
+
+      await deleteRepo(repo.id);
+      toast.success("Repository deleted");
+      setRepoPendingDelete(undefined);
+
+      if (localStopFailed) {
+        toast.warning("Repository deleted, but the local sandbox may already have been gone");
+      }
+    } catch (deleteError) {
+      toast.error(deleteError instanceof Error ? deleteError.message : "Unable to delete repository");
+    } finally {
+      setDeletingRepoId(undefined);
     }
   }
 
@@ -128,6 +170,8 @@ export function WorkspacePage() {
                     onRun={() => navigate(`/workspace/${id}/repo/${repo.id}?run=true`)}
                     onStop={() => void stopRepo(repo)}
                     isStopping={stoppingRepoId === repo.id}
+                    onDelete={() => setRepoPendingDelete(repo)}
+                    isDeleting={deletingRepoId === repo.id}
                   />
                 ))}
             </div>
@@ -151,6 +195,43 @@ export function WorkspacePage() {
         onAdd={addRepo}
         onComplete={() => void refresh()}
       />
+      <Dialog
+        open={Boolean(repoPendingDelete)}
+        onOpenChange={(open) => {
+          if (!open && !deletingRepoId) {
+            setRepoPendingDelete(undefined);
+          }
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete repository?</DialogTitle>
+            <DialogDescription>
+              {repoPendingDelete
+                ? `This removes "${repoPendingDelete.name}" from this workspace and deletes its cached analysis, chat history, cached files, and runtime security events. This does not delete the GitHub repository.`
+                : "This removes the repository from this workspace."}
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button
+              type="button"
+              variant="outline"
+              disabled={Boolean(deletingRepoId)}
+              onClick={() => setRepoPendingDelete(undefined)}
+            >
+              Cancel
+            </Button>
+            <Button
+              type="button"
+              variant="destructive"
+              disabled={Boolean(deletingRepoId)}
+              onClick={() => void confirmDeleteRepo()}
+            >
+              Delete repository
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
     </main>
   );
 }

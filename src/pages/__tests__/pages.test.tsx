@@ -348,7 +348,7 @@ describe("WorkspacePage", () => {
 
   it("opens and cancels repository deletion", async () => {
     const deleteRepo = vi.fn();
-    mockedUseWorkspace.mockReturnValueOnce({
+    mockedUseWorkspace.mockReturnValue({
       workspace: makeWorkspace(),
       repos: [makeRepo()],
       isLoading: false,
@@ -401,7 +401,7 @@ describe("WorkspacePage", () => {
 
   it("shows an error toast when repository deletion fails", async () => {
     const deleteRepo = vi.fn().mockRejectedValue(new Error("delete failed"));
-    mockedUseWorkspace.mockReturnValueOnce({
+    mockedUseWorkspace.mockReturnValue({
       workspace: makeWorkspace(),
       repos: [makeRepo()],
       isLoading: false,
@@ -422,7 +422,7 @@ describe("WorkspacePage", () => {
 
   it("stops local sandboxes before deleting running repositories", async () => {
     const deleteRepo = vi.fn().mockResolvedValue(undefined);
-    mockedUseWorkspace.mockReturnValueOnce({
+    mockedUseWorkspace.mockReturnValue({
       workspace: makeWorkspace(),
       repos: [makeRepo({ status: "running", portalUrl: "https://portal.example" })],
       isLoading: false,

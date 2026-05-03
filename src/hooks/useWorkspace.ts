@@ -140,9 +140,32 @@ export function useWorkspace(workspaceId: string | undefined) {
     });
   }, []);
 
-  const deleteRepo = useCallback(async (_repoId: string) => {
-    throw new Error("Not implemented");
-  }, []);
+  const deleteRepo = useCallback(
+    async (repoId: string) => {
+      if (!workspaceId) {
+        throw new Error("Missing workspace id");
+      }
+
+      await api.repos.deleteFromWorkspace(workspaceId, repoId);
+      setState((current) => {
+        if (!current.data) {
+          return current;
+        }
+
+        const repos = (current.data.repos ?? []).filter((repo) => repo.id !== repoId && repo.repoId !== repoId);
+
+        return {
+          ...current,
+          data: {
+            ...current.data,
+            repos,
+            repoCount: repos.length,
+          },
+        };
+      });
+    },
+    [workspaceId],
+  );
 
   useEffect(() => {
     void refresh();
