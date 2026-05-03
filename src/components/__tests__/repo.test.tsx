@@ -265,6 +265,43 @@ describe("RuntimeProfileCard", () => {
 
     expect(onStopManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test" }));
   });
+
+  it("keeps repo preparation logs out of manual command output", () => {
+    render(<RuntimeProfileCard
+      runnability={makeRunnability({
+        canRun: false,
+        runtimeProfile: makeRuntimeProfile({
+          projectKind: "api-server",
+          supportLevel: "manual-only",
+          previewExpected: false,
+          autoCommand: null,
+          manualCommands: [{ command: "npm test", label: "Run tests", source: "package-script", confidence: "high" }],
+        }),
+      })}
+      commandRuns={{
+        "npm test": {
+          command: "npm test",
+          label: "Run tests",
+          status: "failed",
+          startedAt: "2026-05-03T00:00:00.000Z",
+          outputStartedAt: "2026-05-03T00:00:10.000Z",
+          finishedAt: "2026-05-03T00:00:11.000Z",
+          message: "Command did not start.",
+        },
+      }}
+      terminalLines={[
+        { id: "clone", stream: "system", text: "Cloning https://github.com/snyk-labs/nodejs-goof", createdAt: "2026-05-03T00:00:01.000Z" },
+        { id: "tree", stream: "system", text: "Filesystem tree was empty, checking git index", createdAt: "2026-05-03T00:00:02.000Z" },
+        { id: "error", stream: "stderr", text: "BrowserPod command did not return a readable payload", createdAt: "2026-05-03T00:00:03.000Z" },
+      ]}
+      onRunManualCommand={vi.fn()}
+    />);
+
+    expect(screen.queryByText("Cloning https://github.com/snyk-labs/nodejs-goof")).not.toBeInTheDocument();
+    expect(screen.queryByText("Filesystem tree was empty, checking git index")).not.toBeInTheDocument();
+    expect(screen.queryByText("BrowserPod command did not return a readable payload")).not.toBeInTheDocument();
+    expect(screen.getByText("Waiting for sandbox output. Full output also appears in Console.")).toBeInTheDocument();
+  });
 });
 
 describe("repo controls", () => {

