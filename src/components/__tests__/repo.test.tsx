@@ -9,6 +9,7 @@ import { FileViewer } from "@/components/repo/FileViewer";
 import { PortalPreview } from "@/components/repo/PortalPreview";
 import { RepoCard } from "@/components/repo/RepoCard";
 import { RunButton } from "@/components/repo/RunButton";
+import { RunInspectionDialog } from "@/components/repo/RunInspectionDialog";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
 import { RuntimeProfileCard } from "@/components/repo/RuntimeProfileCard";
 import { api } from "@/lib/api";
@@ -34,6 +35,12 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/lib/fileTreeCache", () => ({
   saveCachedFileTree: vi.fn(),
+}));
+
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,qr"),
+  },
 }));
 
 const podMock = {
@@ -179,14 +186,96 @@ describe("PortalPreview", () => {
   });
 });
 
+describe("RunInspectionDialog", () => {
+  it("renders live preview, console output, and a QR code for preview URLs", async () => {
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        portalUrl="https://portal.example"
+        previewPath="/docs"
+        command="npm run dev"
+        previewExpected
+        terminalLines={[{ id: "line-1", stream: "stdout", text: "server ready", createdAt: "now" }]}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
+    expect(screen.getByText("Current command")).toBeInTheDocument();
+    expect(screen.queryByText("Preview expected")).not.toBeInTheDocument();
+    expect(screen.getByTitle("BrowserPod live preview")).toHaveAttribute("src", "https://portal.example/docs");
+    expect(screen.getByText("server ready")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show QR code" }));
+
+    expect(await screen.findByRole("img", { name: "QR code for BrowserPod preview" })).toHaveAttribute("src", "data:image/png;base64,qr");
+  });
+
+  it("renders a console-only run view without preview URLs", () => {
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        command="npm test"
+        previewExpected={false}
+        terminalLines={[{ id: "line-1", stream: "stderr", text: "test output", createdAt: "now" }]}
+      />,
+    );
+
+    expect(screen.getByText("No live preview yet")).toBeInTheDocument();
+    expect(screen.getByText("test output")).toBeInTheDocument();
+    expect(screen.queryByTitle("BrowserPod live preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show QR code" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the inspector header clear of badge clutter and uses a blurred backdrop", () => {
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        portalUrl="https://portal.example"
+        command="npm run dev"
+        previewExpected
+        projectKind="api-server"
+        riskLevel="high"
+        runtimeEventCount={2}
+        terminalLines={[]}
+      />,
+    );
+
+    expect(screen.queryByText("API server")).not.toBeInTheDocument();
+    expect(screen.queryByText("High-risk repo")).not.toBeInTheDocument();
+    expect(document.querySelector(".backdrop-blur-sm")).toBeInTheDocument();
+  });
+});
+
 describe("RuntimeProfileCard", () => {
+  it("starts as a compact collapsed summary", () => {
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev",
+        manualCommands: [{ command: "npm test", label: "Run tests", source: "package-script", confidence: "high" }],
+      }),
+    })} />);
+
+    const toggle = screen.getByRole("button", { name: /Runtime profile/ });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    expect(screen.getByText("Official run available")).toBeInTheDocument();
+    expect(screen.getByText("1 alternate run")).toBeInTheDocument();
+    expect(screen.queryByText("Official BrowserPod run")).not.toBeInTheDocument();
+    expect(screen.queryByText("npm run dev")).not.toBeInTheDocument();
+  });
+
   it("renders auto-preview commands and runtime evidence", async () => {
     const onRunAuto = vi.fn();
     render(<RuntimeProfileCard runnability={makeRunnability({ autoCommand: "npm run dev", runtimeProfile: makeRuntimeProfile() })} onRunAuto={onRunAuto} />);
 
     expect(screen.getByText("Runtime profile")).toBeInTheDocument();
-    expect(screen.getByText("Auto preview command")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+    expect(screen.getByText("Official BrowserPod run")).toBeInTheDocument();
     expect(screen.getByText("npm run dev")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Runtime details" }));
     expect(screen.getByText("package.json scripts.dev")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Run preview in BrowserPod" }));
     expect(onRunAuto).toHaveBeenCalledWith("npm run dev");
@@ -206,6 +295,8 @@ describe("RuntimeProfileCard", () => {
     })} onRunManualCommand={onRunManualCommand} />);
 
     expect(screen.getByText("Manual only")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+    expect(screen.getByText("Alternate sandbox runs")).toBeInTheDocument();
     expect(screen.getAllByText("npm test").length).toBeGreaterThan(0);
     await userEvent.click(screen.getByRole("button", { name: "Run npm test in BrowserPod" }));
     expect(onRunManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test" }));
@@ -222,7 +313,98 @@ describe("RuntimeProfileCard", () => {
     })} onRunManualCommand={onRunManualCommand} />);
 
     expect(screen.getByText("Analysis only")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
     expect(screen.queryByRole("button", { name: "Run npm test in BrowserPod" })).not.toBeInTheDocument();
+  });
+
+  it("groups official and alternate run paths", async () => {
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev",
+        manualCommands: [
+          { command: "npm run docs", label: "Run docs", description: "Start documented docs server", source: "readme", confidence: "high", previewExpected: true },
+          { command: "npm test", label: "Run tests", description: "AI found a test entrypoint", source: "ai", confidence: "medium", previewExpected: false },
+        ],
+      }),
+    })} onRunAuto={vi.fn()} onRunManualCommand={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+
+    expect(screen.getByText("Official BrowserPod run")).toBeInTheDocument();
+    expect(screen.getByText("Alternate sandbox runs")).toBeInTheDocument();
+    expect(screen.getByText("readme")).toBeInTheDocument();
+    expect(screen.getByText("ai")).toBeInTheDocument();
+    expect(screen.getAllByText("opens preview").length).toBeGreaterThan(0);
+    expect(screen.getByText("console-only")).toBeInTheDocument();
+  });
+
+  it("runs the selected official or AI-suggested path from a dropdown", async () => {
+    const onRunAuto = vi.fn();
+    const onRunManualCommand = vi.fn();
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev",
+        manualCommands: [
+          { command: "npm test", label: "Run tests", source: "ai", confidence: "medium", previewExpected: false },
+        ],
+      }),
+    })} onRunAuto={onRunAuto} onRunManualCommand={onRunManualCommand} />);
+
+    expect(screen.getByLabelText("Run path")).toHaveValue("official");
+    await userEvent.click(screen.getByRole("button", { name: "Run selected in BrowserPod" }));
+    expect(onRunAuto).toHaveBeenCalledWith("npm run dev");
+
+    await userEvent.selectOptions(screen.getByLabelText("Run path"), "manual-0");
+    await userEvent.click(screen.getByRole("button", { name: "Run selected in BrowserPod" }));
+
+    expect(onRunManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test", source: "ai" }));
+  });
+
+  it("offers the active run inspector while running", async () => {
+    const onOpenInspector = vi.fn();
+    render(<RuntimeProfileCard
+      runnability={makeRunnability({ autoCommand: "npm run dev", runtimeProfile: makeRuntimeProfile({ autoCommand: "npm run dev" }) })}
+      isRunning
+      hasInspector
+      activeCommand="npm run dev"
+      onOpenInspector={onOpenInspector}
+    />);
+
+    expect(screen.getByText("Running")).toBeInTheDocument();
+    expect(screen.getByText("npm run dev")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
+
+    expect(onOpenInspector).toHaveBeenCalledOnce();
+  });
+
+  it("lets users stop a running command before switching run paths", async () => {
+    const onStopRun = vi.fn();
+    render(<RuntimeProfileCard
+      runnability={makeRunnability({
+        autoCommand: "npm run dev",
+        runtimeProfile: makeRuntimeProfile({
+          autoCommand: "npm run dev",
+          manualCommands: [{ command: "npm test", label: "Run tests", source: "ai", confidence: "medium" }],
+        }),
+      })}
+      isRunning
+      activeCommand="npm run dev"
+      onRunAuto={vi.fn()}
+      onRunManualCommand={vi.fn()}
+      onStopRun={onStopRun}
+    />);
+
+    const select = screen.getByLabelText("Run path");
+    expect(select).not.toBeDisabled();
+    await userEvent.selectOptions(select, "manual-0");
+    expect(select).toHaveValue("manual-0");
+    expect(screen.getByRole("button", { name: "Run selected in BrowserPod" })).toBeDisabled();
+
+    await userEvent.click(screen.getByRole("button", { name: "Stop current run" }));
+
+    expect(onStopRun).toHaveBeenCalledOnce();
   });
 
   it("shows manual command status, output, and stop controls", async () => {
@@ -255,6 +437,7 @@ describe("RuntimeProfileCard", () => {
       onRunManualCommand={vi.fn()}
     />);
 
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
     expect(screen.getByText("This repo is mostly tests or fixtures, so DevHub will not auto-start a preview.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run tests in BrowserPod" })).toBeDisabled();
     expect(screen.getByText("Status: running")).toBeInTheDocument();
@@ -267,7 +450,7 @@ describe("RuntimeProfileCard", () => {
     expect(onStopManualCommand).toHaveBeenCalledWith(expect.objectContaining({ command: "npm test" }));
   });
 
-  it("keeps repo preparation logs out of manual command output", () => {
+  it("keeps repo preparation logs out of manual command output", async () => {
     render(<RuntimeProfileCard
       runnability={makeRunnability({
         canRun: false,
@@ -298,10 +481,24 @@ describe("RuntimeProfileCard", () => {
       onRunManualCommand={vi.fn()}
     />);
 
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
     expect(screen.queryByText("Cloning https://github.com/snyk-labs/nodejs-goof")).not.toBeInTheDocument();
     expect(screen.queryByText("Filesystem tree was empty, checking git index")).not.toBeInTheDocument();
     expect(screen.queryByText("BrowserPod command did not return a readable payload")).not.toBeInTheDocument();
     expect(screen.getByText("Waiting for sandbox output. Full output also appears in Console.")).toBeInTheDocument();
+  });
+
+  it("collapses runtime reasoning and evidence by default", async () => {
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      runtimeProfile: makeRuntimeProfile({
+        reasoning: "Detailed runtime reasoning",
+        evidence: ["package.json scripts.dev"],
+      }),
+    })} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+    expect(screen.getByRole("button", { name: "Runtime details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Detailed runtime reasoning")).not.toBeInTheDocument();
   });
 });
 

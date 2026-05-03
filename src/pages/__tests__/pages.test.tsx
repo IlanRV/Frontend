@@ -76,6 +76,12 @@ vi.mock("@/components/repo/PortalPreview", () => ({
   PortalPreview: ({ portalUrl }: { portalUrl?: string }) => <div data-testid="portal-preview">{portalUrl ?? "no portal"}</div>,
 }));
 
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,qr"),
+  },
+}));
+
 vi.mock("@/components/repo/RunButton", () => ({
   RunButton: ({ canRun, isRunning, isBusy, label, onRun, onStop }: { canRun: boolean; isRunning: boolean; isBusy?: boolean; label?: string; onRun: () => void; onStop: () => void }) => (
     <button type="button" disabled={!canRun || isBusy} onClick={isRunning ? onStop : onRun}>{isRunning ? "Stop" : label ?? "Run"}</button>
@@ -462,6 +468,21 @@ describe("RepoPage", () => {
 
     await waitFor(() => expect(pod.runProject).toHaveBeenCalledWith("dev", { previewExpected: true }));
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
+  });
+
+  it("keeps repo chat available while the run inspector is open", async () => {
+    const pod = podHook();
+    mockedUsePod.mockReturnValue(pod);
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Run in BrowserPod" }));
+    await waitFor(() => expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument());
+
+    await userEvent.click(screen.getByRole("button", { name: "Open repo chat" }));
+
+    expect(screen.getByRole("complementary", { name: "Inspector chat" })).toBeInTheDocument();
+    expect(screen.getAllByTestId("chat-panel").at(-1)).toHaveTextContent("Repo AI");
   });
 
   it("uses backend autoCommand only for auto-preview runtime profiles", async () => {
@@ -476,10 +497,12 @@ describe("RepoPage", () => {
     renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
 
     expect(screen.getByText("Runtime profile")).toBeInTheDocument();
-    expect(screen.getByText("Auto preview command")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+    expect(screen.getByText("Official BrowserPod run")).toBeInTheDocument();
     await userEvent.click(screen.getAllByRole("button", { name: "Run preview in BrowserPod" })[0]);
 
     await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm run dev", { previewExpected: true }));
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
   });
 
   it("keeps manual-only commands out of the primary run path", async () => {
@@ -512,13 +535,15 @@ describe("RepoPage", () => {
 
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
     expect(screen.getByText("Manual only")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
     await userEvent.click(screen.getByRole("button", { name: "Run npm test in BrowserPod" }));
 
     await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm test", { previewExpected: false }));
     expect(registerRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
   });
 
-  it("shows analysis-only runtime profiles without run controls", () => {
+  it("shows analysis-only runtime profiles without run controls", async () => {
     const runnability = makeRunnability({
       canRun: false,
       entryPoint: null,
@@ -541,7 +566,22 @@ describe("RepoPage", () => {
 
     expect(screen.getByText("Analysis only")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Run" })).toBeDisabled();
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
     expect(screen.queryByRole("button", { name: "Run npm test in BrowserPod" })).not.toBeInTheDocument();
+  });
+
+  it("reopens the inspector while BrowserPod is running", async () => {
+    const pod = podHook();
+    mockedUsePod.mockReturnValue({
+      ...pod,
+      snapshot: { ...pod.snapshot, state: "running", portalUrl: undefined, terminal: [{ id: "line-1", stream: "system", text: "server warming", createdAt: "now" }] },
+    });
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
+
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
+    expect(screen.getAllByText("server warming").length).toBeGreaterThan(0);
   });
 
   it("disables run and shows blocker details when backend says the repo is not runnable", async () => {
@@ -788,8 +828,9 @@ describe("RepoPage", () => {
     await waitFor(() => expect(loadExtraction).toHaveBeenCalledTimes(2));
     expect(screen.getByTestId("functions-viewer")).toHaveTextContent("frontend functions");
 
-    await userEvent.click(screen.getByRole("tab", { name: "Live Preview" }));
-    expect(screen.getByTestId("portal-preview")).toHaveTextContent("https://portal.example");
+    expect(screen.queryByRole("tab", { name: "Live Preview" })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "View run inspector" }));
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
     expect(screen.queryByRole("tab", { name: "Chat" })).not.toBeInTheDocument();
   });
 
