@@ -15,6 +15,7 @@ vi.mock("@/lib/api", () => ({
     },
     repos: {
       add: vi.fn(),
+      deleteFromWorkspace: vi.fn(),
     },
   },
 }));
@@ -103,6 +104,23 @@ describe("useWorkspace", () => {
       result.current.updateRepo({ ...nextRepo, status: "running" });
     });
     expect(result.current.repos.find((item) => item.id === "repo-2")?.status).toBe("running");
+  });
+
+  it("deletes repos from the workspace and updates repoCount", async () => {
+    const repoOne = makeRepo({ id: "repo-1", repoId: "repo-1" });
+    const repoTwo = makeRepo({ id: "repo-2", repoId: "repo-2", name: "api" });
+    workspacesApi.get.mockResolvedValueOnce(makeWorkspace({ repos: [repoOne, repoTwo], repoCount: 2 }));
+    reposApi.deleteFromWorkspace.mockResolvedValueOnce({ success: true, workspaceId: "workspace-1", repoId: "repo-1" });
+    const { result } = renderHook(() => useWorkspace("workspace-1"));
+
+    await waitFor(() => expect(result.current.repos).toHaveLength(2));
+    await act(async () => {
+      await result.current.deleteRepo("repo-1");
+    });
+
+    expect(reposApi.deleteFromWorkspace).toHaveBeenCalledWith("workspace-1", "repo-1");
+    expect(result.current.repos.map((repo) => repo.id)).toEqual(["repo-2"]);
+    expect(result.current.workspace?.repoCount).toBe(1);
   });
 
   it("polls while repos are active", async () => {

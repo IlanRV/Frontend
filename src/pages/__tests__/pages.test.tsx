@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import type { ReactElement } from "react";
+import { useState, type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -9,7 +9,7 @@ import { DashboardPage } from "@/pages/DashboardPage";
 import { LandingPage } from "@/pages/LandingPage";
 import { RepoPage } from "@/pages/RepoPage";
 import { WorkspacePage } from "@/pages/WorkspacePage";
-import { usePod } from "@/hooks/usePod";
+import { stopRegisteredPod, usePod } from "@/hooks/usePod";
 import { useRepo } from "@/hooks/useRepo";
 import { useWorkspace, useWorkspaces } from "@/hooks/useWorkspace";
 import { api } from "@/lib/api";
@@ -28,6 +28,7 @@ vi.mock("@/hooks/useRepo", () => ({
 
 vi.mock("@/hooks/usePod", () => ({
   usePod: vi.fn(),
+  stopRegisteredPod: vi.fn(),
 }));
 
 vi.mock("@/lib/api", () => ({
@@ -50,10 +51,11 @@ vi.mock("@/components/repo/AddRepoModal", () => ({
 }));
 
 vi.mock("@/components/repo/RepoCard", () => ({
-  RepoCard: ({ repo, onOpen, onRun }: { repo: { name: string }; onOpen: () => void; onRun: () => void }) => (
+  RepoCard: ({ repo, onOpen, onRun, onDelete, isDeleting }: { repo: { name: string }; onOpen: () => void; onRun: () => void; onDelete?: () => void; isDeleting?: boolean }) => (
     <div>
       <button type="button" onClick={onOpen}>Open {repo.name}</button>
       <button type="button" onClick={onRun}>Run {repo.name}</button>
+      {onDelete && <button type="button" disabled={isDeleting} onClick={onDelete}>{isDeleting ? "Deleting" : `Delete ${repo.name}`}</button>}
     </div>
   ),
 }));
@@ -96,6 +98,7 @@ const mockedUseWorkspaces = vi.mocked(useWorkspaces);
 const mockedUseWorkspace = vi.mocked(useWorkspace);
 const mockedUseRepo = vi.mocked(useRepo);
 const mockedUsePod = vi.mocked(usePod);
+const mockedStopRegisteredPod = vi.mocked(stopRegisteredPod);
 const mockedApi = vi.mocked(api);
 
 function repoHook(overrides: Partial<ReturnType<typeof useRepo>> = {}) {
@@ -177,9 +180,11 @@ beforeEach(() => {
     refresh: vi.fn(),
     addRepo: vi.fn(),
     updateRepo: vi.fn(),
+    deleteRepo: vi.fn(),
   });
   mockedUseRepo.mockReturnValue(repoHook());
   mockedUsePod.mockReturnValue(podHook());
+  mockedStopRegisteredPod.mockResolvedValue(undefined);
   vi.mocked(mockedApi.repos.getFile).mockResolvedValue({ path: "README.md", content: "backend read", size: 12, updatedAt: "now" });
   vi.mocked(mockedApi.ai.extract).mockResolvedValue({ success: true, extractionId: "ext-1", status: "ready" });
 });
@@ -313,6 +318,7 @@ describe("WorkspacePage", () => {
       refresh,
       addRepo: vi.fn(),
       updateRepo: vi.fn(),
+      deleteRepo: vi.fn(),
     });
     renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
 
@@ -330,6 +336,7 @@ describe("WorkspacePage", () => {
       refresh: vi.fn(),
       addRepo: vi.fn(),
       updateRepo: vi.fn(),
+      deleteRepo: vi.fn(),
     });
     renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
 
@@ -337,6 +344,101 @@ describe("WorkspacePage", () => {
     await userEvent.click(screen.getAllByRole("button", { name: /Add Repo/ }).at(-1)!);
 
     expect(screen.getByTestId("add-repo-modal")).toHaveTextContent("open");
+  });
+
+  it("opens and cancels repository deletion", async () => {
+    const deleteRepo = vi.fn();
+    mockedUseWorkspace.mockReturnValueOnce({
+      workspace: makeWorkspace(),
+      repos: [makeRepo()],
+      isLoading: false,
+      error: undefined,
+      refresh: vi.fn(),
+      addRepo: vi.fn(),
+      updateRepo: vi.fn(),
+      deleteRepo,
+    });
+    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
+
+    expect(screen.getByRole("dialog", { name: "Delete repository?" })).toBeInTheDocument();
+    expect(screen.getByText('This removes "frontend" from this workspace and deletes its cached analysis, chat history, cached files, and runtime security events. This does not delete the GitHub repository.')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+
+    expect(deleteRepo).not.toHaveBeenCalled();
+  });
+
+  it("confirms repository deletion and removes it from the list", async () => {
+    const deleteRepoSpy = vi.fn().mockResolvedValue(undefined);
+    mockedUseWorkspace.mockImplementation(() => {
+      const [repos, setRepos] = useState([makeRepo()]);
+
+      return {
+        workspace: makeWorkspace({ repos, repoCount: repos.length }),
+        repos,
+        isLoading: false,
+        error: undefined,
+        refresh: vi.fn(),
+        addRepo: vi.fn(),
+        updateRepo: vi.fn(),
+        deleteRepo: async (repoId: string) => {
+          await deleteRepoSpy(repoId);
+          setRepos((current) => current.filter((repo) => repo.id !== repoId));
+        },
+      };
+    });
+    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete repository" }));
+
+    await waitFor(() => expect(deleteRepoSpy).toHaveBeenCalledWith("repo-1"));
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Open frontend" })).not.toBeInTheDocument());
+    expect(toast.success).toHaveBeenCalledWith("Repository deleted");
+  });
+
+  it("shows an error toast when repository deletion fails", async () => {
+    const deleteRepo = vi.fn().mockRejectedValue(new Error("delete failed"));
+    mockedUseWorkspace.mockReturnValueOnce({
+      workspace: makeWorkspace(),
+      repos: [makeRepo()],
+      isLoading: false,
+      error: undefined,
+      refresh: vi.fn(),
+      addRepo: vi.fn(),
+      updateRepo: vi.fn(),
+      deleteRepo,
+    });
+    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete repository" }));
+
+    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("delete failed"));
+    expect(screen.getByRole("dialog", { name: "Delete repository?" })).toBeInTheDocument();
+  });
+
+  it("stops local sandboxes before deleting running repositories", async () => {
+    const deleteRepo = vi.fn().mockResolvedValue(undefined);
+    mockedUseWorkspace.mockReturnValueOnce({
+      workspace: makeWorkspace(),
+      repos: [makeRepo({ status: "running", portalUrl: "https://portal.example" })],
+      isLoading: false,
+      error: undefined,
+      refresh: vi.fn(),
+      addRepo: vi.fn(),
+      updateRepo: vi.fn(),
+      deleteRepo,
+    });
+    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
+    await userEvent.click(screen.getByRole("button", { name: "Delete repository" }));
+
+    await waitFor(() => expect(mockedStopRegisteredPod).toHaveBeenCalledWith("repo-1"));
+    expect(deleteRepo).toHaveBeenCalledWith("repo-1");
   });
 });
 

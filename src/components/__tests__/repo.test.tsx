@@ -27,6 +27,7 @@ vi.mock("@/lib/api", () => ({
     },
     repos: {
       delete: vi.fn(),
+      deleteFromWorkspace: vi.fn(),
     },
   },
 }));
@@ -360,6 +361,42 @@ describe("repo controls", () => {
 
     expect(onStop).toHaveBeenCalledOnce();
     expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("renders an accessible delete button without opening the repo", async () => {
+    const onOpen = vi.fn();
+    const onDelete = vi.fn();
+    render(
+      <RepoCard
+        repo={makeRepo()}
+        onOpen={onOpen}
+        onRun={vi.fn()}
+        onDelete={onDelete}
+      />,
+    );
+
+    const deleteButton = screen.getByRole("button", { name: "Delete frontend" });
+    expect(deleteButton).toHaveTextContent("Delete");
+
+    await userEvent.click(deleteButton);
+
+    expect(onDelete).toHaveBeenCalledOnce();
+    expect(onOpen).not.toHaveBeenCalled();
+  });
+
+  it("disables repo delete buttons while deletion is pending", () => {
+    render(
+      <RepoCard
+        repo={makeRepo()}
+        onOpen={vi.fn()}
+        onRun={vi.fn()}
+        onDelete={vi.fn()}
+        isDeleting
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Delete frontend" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Delete frontend" })).toHaveTextContent("Deleting");
   });
 
   it("renders repo card status variants and active state", () => {

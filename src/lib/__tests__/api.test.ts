@@ -94,6 +94,21 @@ describe("api endpoint contracts", () => {
     expect(fetchMock).toHaveBeenNthCalledWith(2, "/api/repos/repo-1/stop", expect.objectContaining({ method: "POST" }));
   });
 
+  it("calls workspace-scoped repo delete endpoint", async () => {
+    fetchMock.mockResolvedValueOnce(jsonResponse({ success: true, workspaceId: "workspace-1", repoId: "repo-1" }));
+
+    await expect(api.repos.deleteFromWorkspace("workspace-1", "repo-1")).resolves.toEqual({
+      success: true,
+      workspaceId: "workspace-1",
+      repoId: "repo-1",
+    });
+
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/api/workspaces/workspace-1/repos/repo-1",
+      expect.objectContaining({ method: "DELETE" }),
+    );
+  });
+
   it("calls repo security summary and runtime event endpoints", async () => {
     fetchMock
       .mockResolvedValueOnce(jsonResponse({
