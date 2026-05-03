@@ -339,6 +339,51 @@ describe("RuntimeProfileCard", () => {
     expect(screen.getByText("console-only")).toBeInTheDocument();
   });
 
+  it("shows inferred package-script run evidence without requiring a README", async () => {
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev",
+        evidence: ["package.json scripts.dev", "frontend framework indicators"],
+        reasoning: "Package scripts and source files point to a preview app.",
+      }),
+    })} onRunAuto={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+
+    expect(screen.getByText("Official BrowserPod run")).toBeInTheDocument();
+    expect(screen.getByText("npm run dev")).toBeInTheDocument();
+    expect(screen.getByText(/Evidence: package\.json scripts\.dev/)).toBeInTheDocument();
+    expect(screen.queryByText("This repo is not runnable in BrowserPod yet")).not.toBeInTheDocument();
+  });
+
+  it("surfaces README-backed workspace scripts as BrowserPod run options", async () => {
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      autoCommand: "npm run dev:frontend",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev:frontend",
+        evidence: ["README says npm run dev:frontend", "root package.json defines dev:frontend"],
+        manualCommands: [
+          {
+            command: "npm run dev:backend",
+            label: "Run backend",
+            reason: "The README and root package expose this backend workspace command.",
+            confidence: "medium",
+          },
+        ],
+      }),
+    })} onRunAuto={vi.fn()} onRunManualCommand={vi.fn()} />);
+
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+
+    expect(screen.getByText("npm run dev:frontend")).toBeInTheDocument();
+    expect(screen.getByText(/Evidence: README says npm run dev:frontend/)).toBeInTheDocument();
+    expect(screen.getByText("Workspace script")).toBeInTheDocument();
+    expect(screen.getByText("npm run dev:backend")).toBeInTheDocument();
+    expect(screen.getByText("The README and root package expose this backend workspace command.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run backend in BrowserPod" })).toBeInTheDocument();
+  });
+
   it("runs the selected official or AI-suggested path from a dropdown", async () => {
     const onRunAuto = vi.fn();
     const onRunManualCommand = vi.fn();

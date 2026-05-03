@@ -505,6 +505,69 @@ describe("RepoPage", () => {
     expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
   });
 
+  it("runs README-backed workspace commands through BrowserPod", async () => {
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const runnability = makeRunnability({
+      autoCommand: "npm run dev:frontend",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev:frontend",
+        evidence: ["README says npm run dev:frontend", "root package.json defines dev:frontend"],
+        manualCommands: [
+          {
+            command: "npm run dev:backend",
+            label: "Run backend",
+            reason: "The README and root package expose this backend workspace command.",
+            confidence: "medium",
+          },
+        ],
+      }),
+    });
+    mockedUseRepo.mockReturnValue(repoHook({ extraction: makeExtraction({ runnability }) }));
+    mockedUsePod.mockReturnValue({
+      ...podHook(),
+      snapshot: { repoId: "repo-1", state: "ready", terminal: [], fileTree: makeFileTree(), runnability },
+      runProject,
+    });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    await userEvent.click(screen.getByRole("button", { name: "Run preview in BrowserPod" }));
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm run dev:frontend", { previewExpected: true }));
+
+    await userEvent.click(screen.getByRole("button", { name: /Runtime profile/ }));
+    await userEvent.click(screen.getByRole("button", { name: "Run backend in BrowserPod" }));
+
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm run dev:backend", { previewExpected: false }));
+  });
+
+  it("uses inferred package scripts when no README evidence is present", async () => {
+    const runProject = vi.fn().mockResolvedValue(undefined);
+    const runnability = makeRunnability({
+      autoCommand: "npm run dev",
+      runtimeProfile: makeRuntimeProfile({
+        autoCommand: "npm run dev",
+        evidence: ["package.json scripts.dev", "frontend framework indicators"],
+      }),
+    });
+    mockedUseRepo.mockReturnValue(repoHook({
+      repo: makeRepo({ aiReadme: null, runnability }),
+      extraction: makeExtraction({ aiReadme: undefined, runnability }),
+    }));
+    mockedUsePod.mockReturnValue({
+      ...podHook(),
+      snapshot: { repoId: "repo-1", state: "ready", terminal: [], fileTree: makeFileTree(), runnability },
+      runProject,
+    });
+
+    renderWithRouter("/workspace/workspace-1/repo/repo-1", <RepoPage />);
+
+    expect(screen.getByText("Runtime profile")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Run preview in BrowserPod" })).toBeEnabled();
+    await userEvent.click(screen.getByRole("button", { name: "Run preview in BrowserPod" }));
+
+    await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm run dev", { previewExpected: true }));
+  });
+
   it("keeps manual-only commands out of the primary run path", async () => {
     const runProject = vi.fn().mockResolvedValue(undefined);
     const registerRun = vi.fn().mockResolvedValue(makeRepo({ status: "running" }));
