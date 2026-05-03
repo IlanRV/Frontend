@@ -76,6 +76,12 @@ vi.mock("@/components/repo/PortalPreview", () => ({
   PortalPreview: ({ portalUrl }: { portalUrl?: string }) => <div data-testid="portal-preview">{portalUrl ?? "no portal"}</div>,
 }));
 
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,qr"),
+  },
+}));
+
 vi.mock("@/components/repo/RunButton", () => ({
   RunButton: ({ canRun, isRunning, isBusy, label, onRun, onStop }: { canRun: boolean; isRunning: boolean; isBusy?: boolean; label?: string; onRun: () => void; onStop: () => void }) => (
     <button type="button" disabled={!canRun || isBusy} onClick={isRunning ? onStop : onRun}>{isRunning ? "Stop" : label ?? "Run"}</button>
@@ -462,6 +468,7 @@ describe("RepoPage", () => {
 
     await waitFor(() => expect(pod.runProject).toHaveBeenCalledWith("dev", { previewExpected: true }));
     expect(window.localStorage.getItem("devhub:repo-run-intent:repo-1")).toBe("true");
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
   });
 
   it("uses backend autoCommand only for auto-preview runtime profiles", async () => {
@@ -516,6 +523,7 @@ describe("RepoPage", () => {
 
     await waitFor(() => expect(runProject).toHaveBeenCalledWith("npm test", { previewExpected: false }));
     expect(registerRun).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
   });
 
   it("shows analysis-only runtime profiles without run controls", () => {

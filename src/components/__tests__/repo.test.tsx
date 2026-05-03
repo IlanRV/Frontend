@@ -9,6 +9,7 @@ import { FileViewer } from "@/components/repo/FileViewer";
 import { PortalPreview } from "@/components/repo/PortalPreview";
 import { RepoCard } from "@/components/repo/RepoCard";
 import { RunButton } from "@/components/repo/RunButton";
+import { RunInspectionDialog } from "@/components/repo/RunInspectionDialog";
 import { RunnabilityBadge } from "@/components/repo/RunnabilityBadge";
 import { RuntimeProfileCard } from "@/components/repo/RuntimeProfileCard";
 import { api } from "@/lib/api";
@@ -34,6 +35,12 @@ vi.mock("@/lib/api", () => ({
 
 vi.mock("@/lib/fileTreeCache", () => ({
   saveCachedFileTree: vi.fn(),
+}));
+
+vi.mock("qrcode", () => ({
+  default: {
+    toDataURL: vi.fn().mockResolvedValue("data:image/png;base64,qr"),
+  },
 }));
 
 const podMock = {
@@ -179,6 +186,45 @@ describe("PortalPreview", () => {
   });
 });
 
+describe("RunInspectionDialog", () => {
+  it("renders live preview, console output, and a QR code for preview URLs", async () => {
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        portalUrl="https://portal.example"
+        previewPath="/docs"
+        command="npm run dev"
+        terminalLines={[{ id: "line-1", stream: "stdout", text: "server ready", createdAt: "now" }]}
+      />,
+    );
+
+    expect(screen.getByRole("dialog", { name: "Run inspector" })).toBeInTheDocument();
+    expect(screen.getByTitle("BrowserPod live preview")).toHaveAttribute("src", "https://portal.example/docs");
+    expect(screen.getByText("server ready")).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Show QR code" }));
+
+    expect(await screen.findByRole("img", { name: "QR code for BrowserPod preview" })).toHaveAttribute("src", "data:image/png;base64,qr");
+  });
+
+  it("renders a console-only run view without preview URLs", () => {
+    render(
+      <RunInspectionDialog
+        open
+        onOpenChange={vi.fn()}
+        command="npm test"
+        terminalLines={[{ id: "line-1", stream: "stderr", text: "test output", createdAt: "now" }]}
+      />,
+    );
+
+    expect(screen.getByText("Console-only command")).toBeInTheDocument();
+    expect(screen.getByText("test output")).toBeInTheDocument();
+    expect(screen.queryByTitle("BrowserPod live preview")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Show QR code" })).not.toBeInTheDocument();
+  });
+});
+
 describe("RuntimeProfileCard", () => {
   it("renders auto-preview commands and runtime evidence", async () => {
     const onRunAuto = vi.fn();
@@ -302,6 +348,18 @@ describe("RuntimeProfileCard", () => {
     expect(screen.queryByText("Filesystem tree was empty, checking git index")).not.toBeInTheDocument();
     expect(screen.queryByText("BrowserPod command did not return a readable payload")).not.toBeInTheDocument();
     expect(screen.getByText("Waiting for sandbox output. Full output also appears in Console.")).toBeInTheDocument();
+  });
+
+  it("collapses runtime reasoning and evidence by default", () => {
+    render(<RuntimeProfileCard runnability={makeRunnability({
+      runtimeProfile: makeRuntimeProfile({
+        reasoning: "Detailed runtime reasoning",
+        evidence: ["package.json scripts.dev"],
+      }),
+    })} />);
+
+    expect(screen.getByRole("button", { name: "Runtime details" })).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("Detailed runtime reasoning")).not.toBeInTheDocument();
   });
 });
 
