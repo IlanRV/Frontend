@@ -96,12 +96,24 @@ export type RuntimeCommandSource = "package-script" | "package-manager" | "readm
 
 export interface RuntimeCommandSuggestion {
   command: string;
+  label?: string | null;
   description?: string | null;
   source?: RuntimeCommandSource;
   confidence?: RuntimeCommandConfidence;
   reason?: string | null;
   evidence?: string | null;
   previewExpected?: boolean;
+}
+
+export type SandboxCommandRunStatus = "starting" | "running" | "completed" | "failed" | "stopping";
+
+export interface SandboxCommandRun {
+  command: string;
+  label?: string | null;
+  status: SandboxCommandRunStatus;
+  startedAt: string;
+  finishedAt?: string;
+  message?: string;
 }
 
 export interface RepoRuntimeProfile {
@@ -159,8 +171,10 @@ export interface PodSnapshot {
 }
 
 export type SandboxSecurityEventCode =
+  | "clone-timeout"
   | "install-timeout"
   | "startup-timeout"
+  | "stop-timeout"
   | "suspicious-log"
   | "process-error"
   | "unsafe-install-retry";

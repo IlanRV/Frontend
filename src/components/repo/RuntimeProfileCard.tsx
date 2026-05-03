@@ -11,20 +11,23 @@ import {
   projectKindLabel,
   supportLevelLabel,
 } from "@/lib/security";
-import type { RunnabilityResult, RuntimeCommandSuggestion } from "@/types";
+import type { RunnabilityResult, RuntimeCommandSuggestion, SandboxCommandRun, TerminalLine } from "@/types";
 
 interface RuntimeProfileCardProps {
   runnability?: RunnabilityResult | null;
   isBusy?: boolean;
+  commandRuns?: Record<string, SandboxCommandRun>;
+  terminalLines?: TerminalLine[];
   onRunAuto?: (command: string) => void;
   onRunManualCommand?: (command: RuntimeCommandSuggestion) => void;
+  onStopManualCommand?: (command: RuntimeCommandSuggestion) => void;
 }
 
 function commandDescription(command: RuntimeCommandSuggestion) {
   return command.description ?? command.reason ?? "Suggested sandbox command";
 }
 
-export function RuntimeProfileCard({ runnability, isBusy, onRunAuto, onRunManualCommand }: RuntimeProfileCardProps) {
+export function RuntimeProfileCard({ runnability, isBusy, commandRuns, terminalLines, onRunAuto, onRunManualCommand, onStopManualCommand }: RuntimeProfileCardProps) {
   const profile = runnability?.runtimeProfile;
   const autoCommand = getAutoPreviewCommand(runnability);
   const manualCommands = getManualCommands(runnability);
