@@ -40,6 +40,24 @@ const API_BASE_URL = (import.meta.env.VITE_API_URL ?? "http://localhost:3001/api
   "",
 );
 const API_TIMEOUT_MS = 90_000;
+const SESSION_STORAGE_KEY = "devhub_session_id";
+
+export function getSessionId(): string {
+  try {
+    const existing = localStorage.getItem(SESSION_STORAGE_KEY);
+
+    if (existing && existing.trim().length > 0) {
+      return existing.trim();
+    }
+
+    const newId = crypto.randomUUID();
+    localStorage.setItem(SESSION_STORAGE_KEY, newId);
+    return newId;
+  } catch {
+    // localStorage unavailable (e.g. incognito in some browsers) — use a per-tab fallback
+    return `session-${crypto.randomUUID()}`;
+  }
+}
 
 type HttpMethod = "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
 
@@ -519,6 +537,8 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
   const headers = new Headers(options.headers);
   const timeout = createFetchTimeout(options.signal ?? undefined);
 
+  headers.set("x-session-id", getSessionId());
+
   if (options.json !== undefined) {
     headers.set("Content-Type", "application/json");
   }
@@ -527,7 +547,7 @@ export async function apiFetch<T>(path: string, options: ApiFetchOptions = {}): 
     const response = await fetch(resolvePath(path), {
       ...options,
       method: options.method ?? "GET",
-      cache: options.cache ?? "no-store",
+      cache: options.cache ?? "default",
       headers,
       signal: timeout.signal,
       body: options.json === undefined ? undefined : JSON.stringify(options.json),

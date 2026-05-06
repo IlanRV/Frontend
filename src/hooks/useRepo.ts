@@ -56,13 +56,32 @@ function extractionFromRepo(repo: Repo): ExtractionResponse | undefined {
   };
 }
 
+function readSessionCache<T>(key: string): T | undefined {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSessionCache<T>(key: string, data: T): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // Storage may be full or unavailable — non-critical.
+  }
+}
+
 function initialState(repoId: string | undefined): RepoState {
   const extraction = loadCachedExtraction(repoId);
+  const cachedRepo = repoId ? readSessionCache<Repo>(`devhub:repo:${repoId}`) : undefined;
 
   return {
+    repo: cachedRepo,
     extraction,
     aiReadme: aiReadmeFromExtraction(extraction),
-    isLoading: Boolean(repoId),
+    isLoading: Boolean(repoId) && !cachedRepo,
     isAiLoading: false,
     isSecurityLoading: false,
   };
@@ -87,6 +106,7 @@ export function useRepo(repoId: string | undefined) {
 
     try {
       const repo = await api.repos.get(repoId);
+      writeSessionCache(`devhub:repo:${repoId}`, repo);
       const repoExtraction = extractionFromRepo(repo);
 
       if (repoExtraction) {

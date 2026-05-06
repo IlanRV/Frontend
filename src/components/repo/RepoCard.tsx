@@ -1,4 +1,4 @@
-import { Bot, ExternalLink, GitBranch, Play, Square, Trash2 } from "lucide-react";
+import { Bot, ExternalLink, GitBranch, Play, Square } from "lucide-react";
 import type { KeyboardEvent } from "react";
 
 import { ExtractionProgressLine } from "@/components/ai/ExtractionProgressLine";
@@ -14,8 +14,6 @@ interface RepoCardProps {
   onRun: () => void;
   onStop?: () => void;
   isStopping?: boolean;
-  onDelete?: () => void;
-  isDeleting?: boolean;
 }
 
 function statusVariant(status: RepoStatus) {
@@ -32,7 +30,7 @@ function statusVariant(status: RepoStatus) {
   }
 }
 
-export function RepoCard({ repo, active, onOpen, onRun, onStop, isStopping, onDelete, isDeleting }: RepoCardProps) {
+export function RepoCard({ repo, active, onOpen, onRun, onStop, isStopping }: RepoCardProps) {
   const canRun = repo.runnability?.canRun ?? repo.runnable ?? false;
   const hasAiReadme = repo.aiReadmeStatus === "ready" || Boolean(repo.aiReadme);
   const isSandboxRunning = repo.status === "running" || Boolean(repo.portalUrl);
@@ -114,22 +112,6 @@ export function RepoCard({ repo, active, onOpen, onRun, onStop, isStopping, onDe
             <ExternalLink className="h-3 w-3" />
             Live
           </Badge>
-        )}
-        {onDelete && (
-          <Button
-            type="button"
-            size="sm"
-            variant="destructive"
-            disabled={isDeleting}
-            aria-label={`Delete ${repo.name}`}
-            onClick={(event) => {
-              event.stopPropagation();
-              onDelete();
-            }}
-          >
-            <Trash2 className="h-3.5 w-3.5" />
-            {isDeleting ? "Deleting" : "Delete"}
-          </Button>
         )}
       </div>
     </article>

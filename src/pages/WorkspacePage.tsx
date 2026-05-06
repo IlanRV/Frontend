@@ -1,21 +1,12 @@
-import { ArrowLeft, Plus, RotateCw } from "lucide-react";
-import { useState } from "react";
+import { ArrowLeft, Loader2, RotateCw } from "lucide-react";
+import { useEffect, useState } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { toast } from "sonner";
 
 import { ChatPanel } from "@/components/chat/ChatPanel";
-import { AddRepoModal } from "@/components/repo/AddRepoModal";
 import { RepoCard } from "@/components/repo/RepoCard";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from "@/components/ui/dialog";
 import { Skeleton } from "@/components/ui/skeleton";
 import { stopRegisteredPod } from "@/hooks/usePod";
 import { useWorkspace } from "@/hooks/useWorkspace";
@@ -25,11 +16,19 @@ import type { Repo } from "@/types";
 export function WorkspacePage() {
   const { id } = useParams<{ id: string }>();
   const navigate = useNavigate();
-  const [isAddRepoOpen, setIsAddRepoOpen] = useState(false);
   const [stoppingRepoId, setStoppingRepoId] = useState<string | undefined>();
-  const [repoPendingDelete, setRepoPendingDelete] = useState<Repo | undefined>();
-  const [deletingRepoId, setDeletingRepoId] = useState<string | undefined>();
-  const { workspace, repos, isLoading, error, refresh, addRepo, updateRepo, deleteRepo } = useWorkspace(id);
+  const { workspace, repos, isLoading, error, refresh, updateRepo } = useWorkspace(id);
+  const [showSlowHint, setShowSlowHint] = useState(false);
+
+  useEffect(() => {
+    if (!isLoading) {
+      setShowSlowHint(false);
+      return;
+    }
+
+    const timeout = window.setTimeout(() => setShowSlowHint(true), 3000);
+    return () => window.clearTimeout(timeout);
+  }, [isLoading]);
 
   async function stopRepo(repo: Repo) {
     if (stoppingRepoId) {
@@ -60,38 +59,6 @@ export function WorkspacePage() {
     }
   }
 
-  async function confirmDeleteRepo() {
-    const repo = repoPendingDelete;
-
-    if (!repo || deletingRepoId) {
-      return;
-    }
-
-    setDeletingRepoId(repo.id);
-
-    try {
-      let localStopFailed = false;
-
-      if (repo.status === "running" || repo.portalUrl) {
-        await stopRegisteredPod(repo.id).catch(() => {
-          localStopFailed = true;
-        });
-      }
-
-      await deleteRepo(repo.id);
-      toast.success("Repository deleted");
-      setRepoPendingDelete(undefined);
-
-      if (localStopFailed) {
-        toast.warning("Repository deleted, but the local sandbox may already have been gone");
-      }
-    } catch (deleteError) {
-      toast.error(deleteError instanceof Error ? deleteError.message : "Unable to delete repository");
-    } finally {
-      setDeletingRepoId(undefined);
-    }
-  }
-
   return (
     <main className="mx-auto max-w-7xl px-4 py-6 sm:px-6 lg:px-8">
       <div className="mb-6 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
@@ -116,10 +83,6 @@ export function WorkspacePage() {
             </>
           )}
         </div>
-        <Button onClick={() => setIsAddRepoOpen(true)} disabled={!workspace}>
-          <Plus className="h-4 w-4" />
-          Add Repo
-        </Button>
       </div>
 
       {error && (
@@ -143,20 +106,25 @@ export function WorkspacePage() {
               <span className="text-xs text-muted-foreground">{repos.length} total</span>
             </div>
             <div className="space-y-3 p-3">
-              {isLoading &&
-                Array.from({ length: 4 }).map((_, index) => (
-                  <Skeleton key={index} className="h-32" />
-                ))}
+              {isLoading && (
+                <>
+                  {showSlowHint && (
+                    <div className="flex items-center gap-2.5 rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800 dark:border-cyan-900 dark:bg-cyan-950 dark:text-cyan-200">
+                      <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                      <span>Waking up the server — this can take up to 30 seconds on the first visit…</span>
+                    </div>
+                  )}
+                  {Array.from({ length: 4 }).map((_, index) => (
+                    <Skeleton key={index} className="h-32" />
+                  ))}
+                </>
+              )}
 
               {!isLoading && repos.length === 0 && (
                 <div className="flex min-h-64 items-center justify-center rounded-lg border border-dashed border-border bg-muted/30 p-6 text-center">
                   <div>
                     <h3 className="text-sm font-semibold">No repos yet</h3>
-                    <p className="mt-2 text-sm text-muted-foreground">Add your first repo!</p>
-                    <Button className="mt-4" size="sm" onClick={() => setIsAddRepoOpen(true)}>
-                      <Plus className="h-4 w-4" />
-                      Add Repo
-                    </Button>
+                    <p className="mt-2 text-sm text-muted-foreground">No repositories have been added to this workspace.</p>
                   </div>
                 </div>
               )}
@@ -170,8 +138,6 @@ export function WorkspacePage() {
                     onRun={() => navigate(`/workspace/${id}/repo/${repo.id}?run=true`)}
                     onStop={() => void stopRepo(repo)}
                     isStopping={stoppingRepoId === repo.id}
-                    onDelete={() => setRepoPendingDelete(repo)}
-                    isDeleting={deletingRepoId === repo.id}
                   />
                 ))}
             </div>
@@ -188,50 +154,6 @@ export function WorkspacePage() {
           )}
         </div>
       )}
-
-      <AddRepoModal
-        open={isAddRepoOpen}
-        onOpenChange={setIsAddRepoOpen}
-        onAdd={addRepo}
-        onComplete={() => void refresh()}
-      />
-      <Dialog
-        open={Boolean(repoPendingDelete)}
-        onOpenChange={(open) => {
-          if (!open && !deletingRepoId) {
-            setRepoPendingDelete(undefined);
-          }
-        }}
-      >
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Delete repository?</DialogTitle>
-            <DialogDescription>
-              {repoPendingDelete
-                ? `This removes "${repoPendingDelete.name}" from this workspace and deletes its cached analysis, chat history, cached files, and runtime security events. This does not delete the GitHub repository.`
-                : "This removes the repository from this workspace."}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogFooter>
-            <Button
-              type="button"
-              variant="outline"
-              disabled={Boolean(deletingRepoId)}
-              onClick={() => setRepoPendingDelete(undefined)}
-            >
-              Cancel
-            </Button>
-            <Button
-              type="button"
-              variant="destructive"
-              disabled={Boolean(deletingRepoId)}
-              onClick={() => void confirmDeleteRepo()}
-            >
-              Delete repository
-            </Button>
-          </DialogFooter>
-        </DialogContent>
-      </Dialog>
     </main>
   );
 }

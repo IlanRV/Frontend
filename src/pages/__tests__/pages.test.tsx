@@ -1,6 +1,6 @@
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { useState, type ReactElement } from "react";
+import { type ReactElement } from "react";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { toast } from "sonner";
@@ -51,11 +51,10 @@ vi.mock("@/components/repo/AddRepoModal", () => ({
 }));
 
 vi.mock("@/components/repo/RepoCard", () => ({
-  RepoCard: ({ repo, onOpen, onRun, onDelete, isDeleting }: { repo: { name: string }; onOpen: () => void; onRun: () => void; onDelete?: () => void; isDeleting?: boolean }) => (
+  RepoCard: ({ repo, onOpen, onRun }: { repo: { name: string }; onOpen: () => void; onRun: () => void }) => (
     <div>
       <button type="button" onClick={onOpen}>Open {repo.name}</button>
       <button type="button" onClick={onRun}>Run {repo.name}</button>
-      {onDelete && <button type="button" disabled={isDeleting} onClick={onDelete}>{isDeleting ? "Deleting" : `Delete ${repo.name}`}</button>}
     </div>
   ),
 }));
@@ -204,7 +203,7 @@ describe("LandingPage", () => {
     );
 
     expect(screen.getByRole("heading", { name: "DevHub" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Create workspace/ })).toHaveAttribute("href", "/dashboard");
+    expect(screen.getByRole("link", { name: /View workspaces/ })).toHaveAttribute("href", "/dashboard");
     expect(screen.getByText("Run in browser")).toBeInTheDocument();
   });
 });
@@ -215,7 +214,6 @@ describe("DashboardPage", () => {
 
     expect(screen.getByText("Workspaces")).toBeInTheDocument();
     expect(screen.getByText("Workspace One")).toBeInTheDocument();
-    expect(screen.getByText("1/3 workspaces used.")).toBeInTheDocument();
   });
 
   it("renders loading and error states", async () => {
@@ -249,7 +247,7 @@ describe("DashboardPage", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it("opens the create modal from the empty workspace state", async () => {
+  it("renders the empty workspace state", () => {
     mockedUseWorkspaces.mockReturnValueOnce({
       workspaces: [],
       isLoading: false,
@@ -261,46 +259,6 @@ describe("DashboardPage", () => {
     renderWithRouter("/dashboard", <DashboardPage />);
 
     expect(screen.getByText("No workspaces yet")).toBeInTheDocument();
-    await userEvent.click(screen.getAllByRole("button", { name: "Create Workspace" }).at(-1)!);
-
-    expect(screen.getByRole("dialog")).toHaveTextContent("Create workspace");
-  });
-
-  it("asks before deleting workspaces", async () => {
-    const deleteWorkspace = vi.fn().mockResolvedValue(undefined);
-    vi.spyOn(window, "confirm").mockReturnValue(true);
-    mockedUseWorkspaces.mockReturnValueOnce({
-      workspaces: [makeWorkspace()],
-      isLoading: false,
-      error: undefined,
-      refresh: vi.fn(),
-      createWorkspace: vi.fn(),
-      deleteWorkspace,
-    });
-    renderWithRouter("/dashboard", <DashboardPage />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete workspace" }));
-
-    await waitFor(() => expect(deleteWorkspace).toHaveBeenCalledWith("workspace-1"));
-    expect(toast.success).toHaveBeenCalledWith("Workspace deleted");
-  });
-
-  it("cancels workspace deletes", async () => {
-    const deleteWorkspace = vi.fn();
-    vi.spyOn(window, "confirm").mockReturnValue(false);
-    mockedUseWorkspaces.mockReturnValueOnce({
-      workspaces: [makeWorkspace()],
-      isLoading: false,
-      error: undefined,
-      refresh: vi.fn(),
-      createWorkspace: vi.fn(),
-      deleteWorkspace,
-    });
-    renderWithRouter("/dashboard", <DashboardPage />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete workspace" }));
-
-    expect(deleteWorkspace).not.toHaveBeenCalled();
   });
 });
 
@@ -333,7 +291,7 @@ describe("WorkspacePage", () => {
     expect(refresh).toHaveBeenCalledOnce();
   });
 
-  it("opens the add-repo modal from an empty workspace", async () => {
+  it("renders empty repo state without add button", () => {
     mockedUseWorkspace.mockReturnValueOnce({
       workspace: makeWorkspace(),
       repos: [],
@@ -347,104 +305,8 @@ describe("WorkspacePage", () => {
     renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
 
     expect(screen.getByText("No repos yet")).toBeInTheDocument();
-    await userEvent.click(screen.getAllByRole("button", { name: /Add Repo/ }).at(-1)!);
-
-    expect(screen.getByTestId("add-repo-modal")).toHaveTextContent("open");
-  });
-
-  it("opens and cancels repository deletion", async () => {
-    const deleteRepo = vi.fn();
-    mockedUseWorkspace.mockReturnValue({
-      workspace: makeWorkspace(),
-      repos: [makeRepo()],
-      isLoading: false,
-      error: undefined,
-      refresh: vi.fn(),
-      addRepo: vi.fn(),
-      updateRepo: vi.fn(),
-      deleteRepo,
-    });
-    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
-
-    expect(screen.getByRole("dialog", { name: "Delete repository?" })).toBeInTheDocument();
-    expect(screen.getByText('This removes "frontend" from this workspace and deletes its cached analysis, chat history, cached files, and runtime security events. This does not delete the GitHub repository.')).toBeInTheDocument();
-
-    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
-
-    expect(deleteRepo).not.toHaveBeenCalled();
-  });
-
-  it("confirms repository deletion and removes it from the list", async () => {
-    const deleteRepoSpy = vi.fn().mockResolvedValue(undefined);
-    mockedUseWorkspace.mockImplementation(() => {
-      const [repos, setRepos] = useState([makeRepo()]);
-
-      return {
-        workspace: makeWorkspace({ repos, repoCount: repos.length }),
-        repos,
-        isLoading: false,
-        error: undefined,
-        refresh: vi.fn(),
-        addRepo: vi.fn(),
-        updateRepo: vi.fn(),
-        deleteRepo: async (repoId: string) => {
-          await deleteRepoSpy(repoId);
-          setRepos((current) => current.filter((repo) => repo.id !== repoId));
-        },
-      };
-    });
-    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
-    await userEvent.click(screen.getByRole("button", { name: "Delete repository" }));
-
-    await waitFor(() => expect(deleteRepoSpy).toHaveBeenCalledWith("repo-1"));
-    await waitFor(() => expect(screen.queryByRole("button", { name: "Open frontend" })).not.toBeInTheDocument());
-    expect(toast.success).toHaveBeenCalledWith("Repository deleted");
-  });
-
-  it("shows an error toast when repository deletion fails", async () => {
-    const deleteRepo = vi.fn().mockRejectedValue(new Error("delete failed"));
-    mockedUseWorkspace.mockReturnValue({
-      workspace: makeWorkspace(),
-      repos: [makeRepo()],
-      isLoading: false,
-      error: undefined,
-      refresh: vi.fn(),
-      addRepo: vi.fn(),
-      updateRepo: vi.fn(),
-      deleteRepo,
-    });
-    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
-    await userEvent.click(screen.getByRole("button", { name: "Delete repository" }));
-
-    await waitFor(() => expect(toast.error).toHaveBeenCalledWith("delete failed"));
-    expect(screen.getByRole("dialog", { name: "Delete repository?" })).toBeInTheDocument();
-  });
-
-  it("stops local sandboxes before deleting running repositories", async () => {
-    const deleteRepo = vi.fn().mockResolvedValue(undefined);
-    mockedUseWorkspace.mockReturnValue({
-      workspace: makeWorkspace(),
-      repos: [makeRepo({ status: "running", portalUrl: "https://portal.example" })],
-      isLoading: false,
-      error: undefined,
-      refresh: vi.fn(),
-      addRepo: vi.fn(),
-      updateRepo: vi.fn(),
-      deleteRepo,
-    });
-    renderWithRouter("/workspace/workspace-1", <WorkspacePage />);
-
-    await userEvent.click(screen.getByRole("button", { name: "Delete frontend" }));
-    await userEvent.click(screen.getByRole("button", { name: "Delete repository" }));
-
-    await waitFor(() => expect(mockedStopRegisteredPod).toHaveBeenCalledWith("repo-1"));
-    expect(deleteRepo).toHaveBeenCalledWith("repo-1");
+    expect(screen.queryByRole("button", { name: /Add Repo/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Delete/ })).not.toBeInTheDocument();
   });
 });
 

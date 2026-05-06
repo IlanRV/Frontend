@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 
 import { api } from "@/lib/api";
-import type { CreateWorkspacePayload, Repo, Workspace } from "@/types";
+import type { Repo, Workspace } from "@/types";
 
 const ACTIVE_REPO_STATUSES = new Set(["cloning", "analyzing"]);
 export const WORKSPACE_LIMIT = 3;
@@ -16,9 +16,31 @@ function getErrorMessage(error: unknown, fallback: string) {
   return error instanceof Error ? error.message : fallback;
 }
 
+function readSessionCache<T>(key: string): T | undefined {
+  try {
+    const raw = sessionStorage.getItem(key);
+    return raw ? (JSON.parse(raw) as T) : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function writeSessionCache<T>(key: string, data: T): void {
+  try {
+    sessionStorage.setItem(key, JSON.stringify(data));
+  } catch {
+    // Storage may be full or unavailable — non-critical.
+  }
+}
+
 export function useWorkspaces() {
-  const [state, setState] = useState<AsyncState<Workspace[]>>({
-    isLoading: true,
+  const cacheKey = "devhub:workspaces";
+  const [state, setState] = useState<AsyncState<Workspace[]>>(() => {
+    const cached = readSessionCache<Workspace[]>(cacheKey);
+    return {
+      data: cached,
+      isLoading: !cached,
+    };
   });
 
   const refresh = useCallback(async () => {
@@ -26,6 +48,7 @@ export function useWorkspaces() {
 
     try {
       const workspaces = await api.workspaces.list();
+      writeSessionCache(cacheKey, workspaces);
       setState({ data: workspaces, isLoading: false });
     } catch (error) {
       setState((current) => ({
@@ -36,7 +59,7 @@ export function useWorkspaces() {
     }
   }, []);
 
-  const createWorkspace = useCallback(async (payload: CreateWorkspacePayload) => {
+  const createWorkspace = useCallback(async (payload: { name: string; description: string }) => {
     const workspace = await api.workspaces.create(payload);
     setState((current) => ({
       ...current,
@@ -68,13 +91,22 @@ export function useWorkspaces() {
 }
 
 export function useWorkspace(workspaceId: string | undefined) {
-  const [state, setState] = useState<AsyncState<Workspace>>({
-    isLoading: Boolean(workspaceId),
+  const cacheKey = workspaceId ? `devhub:workspace:${workspaceId}` : "";
+  const [state, setState] = useState<AsyncState<Workspace>>(() => {
+    const cached = cacheKey ? readSessionCache<Workspace>(cacheKey) : undefined;
+    return {
+      data: cached,
+      isLoading: Boolean(workspaceId) && !cached,
+    };
   });
 
   useEffect(() => {
-    setState({ isLoading: Boolean(workspaceId) });
-  }, [workspaceId]);
+    const cached = cacheKey ? readSessionCache<Workspace>(cacheKey) : undefined;
+    setState({
+      data: cached,
+      isLoading: Boolean(workspaceId) && !cached,
+    });
+  }, [cacheKey, workspaceId]);
 
   const refresh = useCallback(async () => {
     if (!workspaceId) {
@@ -86,6 +118,7 @@ export function useWorkspace(workspaceId: string | undefined) {
 
     try {
       const workspace = await api.workspaces.get(workspaceId);
+      writeSessionCache(`devhub:workspace:${workspaceId}`, workspace);
       setState({ data: workspace, isLoading: false });
     } catch (error) {
       setState((current) => ({

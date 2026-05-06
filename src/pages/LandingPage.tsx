@@ -157,7 +157,7 @@ export function LandingPage() {
             >
               <Link to="/dashboard">
                 <span className="pointer-events-none absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(125,249,255,0.92),rgba(255,255,255,0.86)_28%,transparent_64%)] opacity-0 transition-opacity duration-300 group-hover:opacity-100 group-focus-visible:opacity-100" />
-                <span className="relative z-10">Create workspace</span>
+                <span className="relative z-10">View workspaces</span>
                 <ArrowRight className="relative z-10 h-4 w-4" />
               </Link>
             </Button>

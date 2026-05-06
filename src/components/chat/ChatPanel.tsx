@@ -9,6 +9,7 @@ import {
   chatPanelMessageCacheKey,
   getCachedChatConversations,
   getCachedChatMessages,
+  removeCachedChatMessages,
   setCachedChatConversations,
   setCachedChatMessages,
 } from "@/components/chat/chatPanelStore";
@@ -20,13 +21,13 @@ import type { ChatConversationSummary, ChatMessage as ChatMessageType } from "@/
 
 type ChatScope =
   | {
-      type: "workspace";
-      id: string;
-    }
+    type: "workspace";
+    id: string;
+  }
   | {
-      type: "repo";
-      id: string;
-    };
+    type: "repo";
+    id: string;
+  };
 
 interface ChatPanelProps {
   scope: ChatScope;
@@ -260,32 +261,35 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
   }, [key, setCachedConversationList]);
 
   const clearActiveConversation = useCallback(async () => {
+    const deletingConversationId = activeConversationId;
     setError(undefined);
     setCachedMessages([]);
-    setCachedConversationList((current) => current.map((conversation) => (
-      conversation.id === activeConversationId
-        ? {
-            ...conversation,
-            title: "New chat",
-            updatedAt: new Date().toISOString(),
-            messageCount: 0,
-          }
-        : conversation
-    )));
 
     try {
       if (scope.type === "workspace") {
-        await api.chat.clearWorkspace(scope.id, activeConversationId);
+        await api.chat.clearWorkspace(scope.id, deletingConversationId);
       } else {
-        await api.chat.clearRepo(scope.id, activeConversationId);
+        await api.chat.clearRepo(scope.id, deletingConversationId);
       }
+
+      // Remove the conversation from the list and clean up its message cache
+      removeCachedChatMessages(chatPanelMessageCacheKey(key, deletingConversationId));
+
+      // Atomically remove the conversation and switch to the next available one
+      setCachedConversationList((current) => {
+        const filtered = current.filter((conversation) => conversation.id !== deletingConversationId);
+        const next = filtered.length > 0 ? filtered : [defaultConversation()];
+        setActiveConversationId(next[0].id);
+        setMessages(getCachedChatMessages(chatPanelMessageCacheKey(key, next[0].id)) ?? []);
+        return next;
+      });
 
       toast.success("Chat history cleared");
     } catch (clearError) {
       toast.error(getErrorMessage(clearError, "Unable to clear chat history"));
       void loadMessages();
     }
-  }, [activeConversationId, loadMessages, scope.id, scope.type, setCachedConversationList, setCachedMessages]);
+  }, [activeConversationId, key, loadMessages, scope.id, scope.type, setCachedConversationList, setCachedMessages]);
 
   useEffect(() => {
     const nextConversations = getInitialConversations(key);
@@ -337,7 +341,7 @@ export function ChatPanel({ scope, title = "AI chat", className }: ChatPanelProp
           <Button variant="ghost" size="icon" onClick={startNewConversation} title="New chat" disabled={isThinking}>
             <Plus className="h-4 w-4" />
           </Button>
-          <Button variant="ghost" size="icon" onClick={() => void clearActiveConversation()} title="Clear chat" disabled={isLoading || isThinking || messages.length === 0}>
+          <Button variant="ghost" size="icon" onClick={() => void clearActiveConversation()} title="Delete chat" disabled={isLoading || isThinking || messages.length === 0}>
             <Trash2 className="h-4 w-4" />
           </Button>
           <Button variant="ghost" size="icon" onClick={() => void loadMessages()} title="Reload chat">

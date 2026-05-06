@@ -1,4 +1,5 @@
 import type { ChatConversationSummary, ChatMessage as ChatMessageType } from "@/types";
+import { getSessionId } from "@/lib/api";
 
 interface ChatScopeKeyInput {
   type: "workspace" | "repo";
@@ -9,7 +10,7 @@ const messageCache = new Map<string, ChatMessageType[]>();
 const conversationCache = new Map<string, ChatConversationSummary[]>();
 
 export function chatPanelCacheKey(scope: ChatScopeKeyInput) {
-  return `${scope.type}:${scope.id}`;
+  return `${getSessionId()}:${scope.type}:${scope.id}`;
 }
 
 export function chatPanelMessageCacheKey(scopeKey: string, conversationId: string) {
@@ -22,6 +23,10 @@ export function getCachedChatMessages(key: string) {
 
 export function setCachedChatMessages(key: string, messages: ChatMessageType[]) {
   messageCache.set(key, messages);
+}
+
+export function removeCachedChatMessages(key: string) {
+  messageCache.delete(key);
 }
 
 export function getCachedChatConversations(key: string) {
